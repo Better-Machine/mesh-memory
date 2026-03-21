@@ -1,75 +1,96 @@
 # mesh-memory
 
-**Per-message, cross-session, cross-agent memory mesh for OpenClaw.**
+Cross-session memory and consent-gated collaboration for OpenClaw agents.
 
-Built by [Liz](https://github.com/LizSquirrelBot) and [Erik Ross](https://github.com/Kosfootel).
+Built by Liz and Erik Ross · [Better Machine](https://bettermachine.ai)
 
-> "Every message. Every agent. One shared memory." 
+---
 
-## What it is
+## What it does
 
-`mesh-memory` is an OpenClaw plugin that propagates agent memory in near-real-time across sessions and agents. Every message any agent sends or receives is extracted, filtered for signal, and shared with all peer agents via A2A — making the entire agent mesh operate from a shared, current understanding of context.
+Two distinct layers:
 
-### Components
+### Layer 1 — Session Cohesion (always on)
 
-- **memory-watcher** — `fs.watch` daemon on session JSONL, fires on every write
-- **memory-relay** — A2A transport layer, pushes structured memory events to peers  
-- **memory-receiver** — ingests peer events, writes to shared QMD-indexed directory
-- **memory-bridge** — exports LCM summaries from SQLite into QMD-searchable markdown
-- **dream-cycle** — nightly cron that distills recent context into durable MEMORY.md updates
+Each agent maintains deep, private memory across sessions:
 
-### Architecture
+- **LCM bridge** — exports LCM summaries into searchable markdown
+- **Dream cycle** — nightly consolidation of recent context into MEMORY.md (human-approved)
+- **Privacy filter** — per-message and session-scoped suppression via `private` keyword or `[private]`/`[/private]` blocks
+- **Lesson tagging** — `[lesson]` `[correction]` `[mistake]` `[decision]` `[warning]` tags route messages to a dedicated lessons log, prioritised by the dream cycle
+
+This is the foundation. No relay, no cross-agent sharing by default. Each agent knows its own history deeply.
+
+### Layer 2 — Collaboration Mesh (ephemeral, consent-gated)
+
+When a task genuinely benefits from multi-agent collaboration, agents can open a **mesh thread**:
+
+1. An agent detects a collaboration opportunity and proposes a thread via A2A
+2. Peer agents evaluate and consent (or decline) independently
+3. Once agents reach consensus, the **user receives a single notification** with full context
+4. User approves → thread opens with a defined purpose, scope, and close condition
+5. Agents collaborate in a shared bounded context
+6. Thread closes → optional summary distilled to individual agent memory
+
+No thread opens without user approval. No agent joins without consenting. No content bleeds outside the stated scope.
+
+---
+
+## Privacy
+
+| Method | How |
+|--------|-----|
+| Per-message | Include `private` anywhere in your message |
+| Session block | `[private]` opens, `[/private]` closes |
+| Keyword config | Add words to `privacy.keywords` in config |
+
+Suppressed messages are not relayed. A `[redacted]` notice is logged locally so agents know a gap exists.
+
+---
+
+## Lesson Tagging
+
+Tag messages to create a persistent, searchable lessons log:
 
 ```
-Session JSONL (local)
-       │
-  memory-watcher (fs.watch)
-       │
-  memory-relay (A2A push)
-       │
-  ─────┼──────────────────────────────────
-       │            │              │
-  Liz (.23)    Ray (.22)    Woodhouse (.24)
-  memory-      memory-       memory-
-  receiver     receiver      receiver
-       │            │              │
-  shared QMD index ──────────────────
-       │
-  memory_search (surgical recall, ~30s latency)
+[lesson]     — insight or principle worth keeping
+[correction] — corrects a prior error
+[mistake]    — agent-acknowledged error (self-tagging is expected)
+[decision]   — deliberate choice + rationale
+[warning]    — known risk or gotcha
 ```
 
-### Performance target
+Tags can appear anywhere inline. Tagged messages are written to `memory/mesh/lessons/YYYY-MM-DD.md` and indexed by QMD.
 
-| Scenario | Target latency |
-|---|---|
-| Same agent, next session | < 60 seconds |
-| Cross-agent, LAN | < 30 seconds (A2A) |
-| LCM summary → searchable | < 60 seconds (bridge + QMD) |
-
-## Installation
-
-```bash
-git clone https://github.com/Kosfootel/mesh-memory.git
-cd mesh-memory
-npm install
-npm run setup    # interactive — creates coordination repo, handles token exchange with peers
-npm start        # watcher + receiver + bridge
-```
-
-`setup.mjs` creates a private GitHub repo (`mesh-memory-coordination`) that all agents use to exchange receiver tokens without manual coordination. Run it on all nodes roughly simultaneously — it waits for peers automatically.
-
-See [DEPLOY.md](DEPLOY.md) for full deployment guidance including timing, failure modes, and agent-specific operating notes.  
-See [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
+---
 
 ## Status
 
-🚧 **Active development** — pre-alpha
+| Component | Status |
+|-----------|--------|
+| Session cohesion (LCM bridge, dream cycle) | ✅ Live |
+| Privacy filter | ✅ Live |
+| Lesson tagging | ✅ Live |
+| Agent guidelines | ✅ Written |
+| Collaboration mesh (thread model) | 🔲 Designed, not yet built |
 
-## Authors
+---
 
-- **Liz** — AI partner, Better Machine (@LizSquirrelBot)
-- **Erik Ross** — Founder, Better Machine (@Kosfootel)
+## Setup
 
-## License
+```bash
+git clone https://github.com/Kosfootel/mesh-memory
+cd mesh-memory
+npm install
+node setup.mjs   # bootstraps token exchange with peer agents
+```
 
-MIT
+See [DEPLOY.md](./DEPLOY.md) for full deployment instructions.
+See [AGENT_GUIDELINES.md](./AGENT_GUIDELINES.md) for agent operating instructions.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for full design documentation.
+
+---
+
+## Repo
+
+[github.com/Kosfootel/mesh-memory](https://github.com/Kosfootel/mesh-memory) (private)

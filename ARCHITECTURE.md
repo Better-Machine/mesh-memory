@@ -1,204 +1,209 @@
 # mesh-memory Architecture
 
-**Per-message, cross-session, cross-agent memory mesh for OpenClaw.**
+## Design Philosophy
 
-## Overview
+Two layers. One always on. One only when needed.
 
-mesh-memory creates a real-time shared memory layer across OpenClaw agents. Every substantive message any agent sends or receives is extracted, filtered, and propagated to all peer agents — giving the entire mesh a shared, current understanding of context.
+---
 
-The novel contribution is bridging two existing OpenClaw subsystems:
-- **LCM** (Local Conversation Memory) — per-session summaries stored in SQLite
-- **QMD** (Query Memory Directory) — file-based memory indexed for semantic search
+## Layer 1: Session Cohesion (Primary)
 
-mesh-memory connects these by exporting LCM summaries as QMD-searchable markdown and relaying real-time messages across agents via A2A.
-
-## System Diagram
+Every agent maintains its own deep, continuous memory across sessions. This is the foundation — not a feature.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Agent: Liz (.23)                        │
-│                                                             │
-│  Session JSONL ──→ memory-watcher ──→ memory-relay ──┐     │
-│       (fs.watch)        │                  (A2A POST)│     │
-│                         │                            │     │
-│  lcm.db ──→ memory-bridge ──→ memory/lcm/*.md        │     │
-│       (SQLite poll)                                  │     │
-│                                                      │     │
-│  memory/mesh/*.md ←── memory-receiver (port 18801)   │     │
-│       │                     ↑                        │     │
-│       └── QMD auto-indexes  │                        │     │
-│                             │                        │     │
-│  dream-cycle (2AM cron) ───→ dream-cycle-YYYY-MM-DD.md     │
-│       (reads mesh/ + lcm/, suggests MEMORY.md updates)     │
-└─────────────────────────┬───────────────────────────────────┘
-                          │ A2A
-              ┌───────────┼───────────┐
-              ▼           ▼           ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│  Ray (.22)   │ │Woodhouse(.24)│ │  Future peer │
-│  receiver    │ │  receiver    │ │  receiver    │
-│  :18801      │ │  :18801      │ │  :18801      │
-└──────────────┘ └──────────────┘ └──────────────┘
+Session JSONL
+    ↓
+LCM (lossless-claw)       — raw message database, summaries with expand capability
+    ↓
+QMD (quick-memory-distill) — surgical retrieval, indexes MEMORY.md + memory/*.md
+    ↓
+memory/YYYY-MM-DD.md       — daily notes: raw events, decisions, context
+memory/mesh/lessons/       — tagged lessons, corrections, mistakes (cross-session)
+MEMORY.md                  — curated long-term memory: the distilled essence
+    ↓
+dream-cycle (nightly)      — consolidates recent summaries → MEMORY.md suggestions
+                             (human-approved, never auto-modifies)
 ```
 
-## Data Flow
+Each agent's memory is:
+- **Private by default** — not shared with peer agents unless a thread is opened
+- **Deep** — LCM preserves every message with full expandability
+- **Surgical** — QMD retrieves only what's relevant, not entire files
+- **Durable** — daily files and MEMORY.md survive gateway restarts and version upgrades
 
-### Real-time path (< 30s target)
+### Privacy filter (session cohesion feature)
+
+Messages can be marked private to suppress them from ever leaving the agent:
+
+- Per-message: include the word `private` anywhere in the message
+- Session block: `[private]` opens a private zone, `[/private]` closes it
+- Keyword config: define sensitive keywords in `mesh-memory.config.local.json`
+
+See `privacy.mjs` for implementation.
+
+### Lesson tagging (session cohesion feature)
+
+Agents and users can tag messages for priority treatment in the dream-cycle:
+
+| Tag | Meaning |
+|-----|---------|
+| `[lesson]` | Insight or principle worth keeping |
+| `[correction]` | Corrects a prior error |
+| `[mistake]` | Agent-acknowledged error — own it, tag it |
+| `[decision]` | Deliberate choice + rationale |
+| `[warning]` | Known risk or gotcha |
+
+Tagged messages are written to `memory/mesh/lessons/YYYY-MM-DD.md` and indexed by QMD.
+See `lesson-tagger.mjs` for implementation.
+
+---
+
+## Layer 2: Collaboration Mesh (Secondary — Ephemeral, Consent-Gated)
+
+When a task genuinely benefits from multi-agent collaboration, agents can open a **mesh thread** — a bounded, purpose-scoped shared context that lives only as long as the work requires.
+
+### Core principles
+
+- **Ephemeral** — threads have a defined purpose and a close condition
+- **Consent-gated** — no agent joins without explicitly agreeing; no thread opens without user approval
+- **Purpose-scoped** — only content relevant to the stated purpose is shared
+- **Non-polluting** — thread content does not bleed into individual agent memory unless deliberately archived
+- **User-gated** — the user is the final approver; agents negotiate among themselves first
+
+### Thread lifecycle
 
 ```
-1. Agent writes message to session JSONL
-2. memory-watcher detects write (chokidar, ~200ms stabilization)
-3. Watcher reads delta, parses JSONL, filters for substantive turns
-4. memory-relay POSTs MemoryEvent to all peers (parallel, rate-limited)
-5. Peer memory-receiver validates and writes to memory/mesh/YYYY-MM-DD.md
-6. QMD indexes the new file (~10-30s)
-7. Peer agent can now search/recall the message
+1. PROPOSAL
+   Agent A detects that a task would benefit from collaboration.
+   A proposes a thread via A2A to relevant peers:
+     - Purpose (one sentence)
+     - Scope (what will be shared)
+     - Participating agents
+     - Expected duration or close condition
+
+2. AGENT CONSENT
+   Each peer evaluates the proposal and responds: accept / decline / counteroffer.
+   If any agent declines, Agent A either revises the proposal or proceeds without them.
+   Agents negotiate among themselves — user is not involved at this stage.
+
+3. USER NOTIFICATION
+   Once all agents have reached consensus, the user receives a single notification:
+     "Ray and I want to open a collaboration thread. Here's why, here's the scope,
+      here's who's involved, here's when it ends. Approve?"
+   The user sees a complete picture — not a work-in-progress negotiation.
+
+4. USER APPROVAL
+   User approves or declines.
+   Approval is the final gate — no thread opens without it.
+
+5. THREAD OPEN
+   A shared context file is created: memory/threads/<thread-id>/context.md
+   Scoped ephemeral tokens are issued to participating agents.
+   Agents begin writing to shared context.
+
+6. WORK HAPPENS
+   Agents read and write to the thread context.
+   Privacy filter still applies within threads.
+   All participants see the same context.
+
+7. THREAD CLOSE
+   Triggered by: close condition met, all agents agree to close,
+   user requests close, or timeout.
+   Optional: thread summary distilled to individual agent MEMORY.md
+   (requires separate per-agent approval).
+   Thread context archived. Tokens invalidated.
 ```
 
-### LCM bridge path (< 60s target)
+### What gets shared in a thread
+
+Only what the stated scope covers. A thread scoped to "coordinate the clean-sl8 iOS app plan" shares:
+- Messages explicitly written to the thread context
+- Decisions and lessons tagged for the thread
+
+What it does NOT share:
+- The agents' individual session memory
+- Messages from other ongoing conversations
+- Anything marked private
+
+### When agents should propose a thread
+
+A thread is warranted when:
+- Two or more agents are working on the same deliverable and need to avoid conflicts
+- One agent has context another agent critically needs to do their job
+- A handoff is happening and the receiving agent needs live context, not a static file
+- A decision needs genuine input from multiple agents before reaching the user
+
+A thread is NOT warranted for:
+- Routine status updates (use A2A point messages)
+- Information that can be captured in a handoffs/ file
+- Anything one agent can handle independently
+- Curiosity or "it might be useful"
+
+---
+
+## Component Map
 
 ```
-1. LCM writes conversation summary to lcm.db (SQLite)
-2. memory-bridge polls SQLite on interval (default: 60s)
-3. New summaries exported to memory/lcm/YYYY-MM-DD.md
-4. QMD indexes the new file
-5. Agent can now search LCM summaries alongside mesh events
+mesh-memory/
+│
+├── Session Cohesion Layer
+│   ├── memory-bridge.mjs      — polls LCM SQLite → memory/lcm/YYYY-MM-DD.md
+│   ├── dream-cycle.mjs        — nightly consolidation → MEMORY.md suggestions
+│   ├── privacy.mjs            — privacy filter (per-message, session block, keywords)
+│   └── lesson-tagger.mjs      — tag detection and lessons file writer
+│
+├── Collaboration Mesh Layer (v2 — in design)
+│   ├── thread-propose.mjs     — A2A proposal to peers
+│   ├── thread-consent.mjs     — agent consent handler
+│   ├── thread-notify.mjs      — user notification after agent consensus
+│   ├── thread-context.mjs     — shared context read/write
+│   └── thread-close.mjs       — cleanup, archival, token revocation
+│
+├── Infrastructure (v1 — relay pipeline, deprioritized)
+│   ├── memory-watcher.mjs     — fs.watch on session JSONL (relay trigger)
+│   ├── memory-relay.mjs       — A2A HTTP relay to peers
+│   └── memory-receiver.mjs    — Express receiver, writes to memory/mesh/
+│
+├── Setup & Config
+│   ├── setup.mjs              — bootstraps token exchange via coordination repo
+│   ├── config.mjs             — config loader
+│   └── mesh-memory.config.json — example config
+│
+└── Documentation
+    ├── ARCHITECTURE.md        — this file
+    ├── AGENT_GUIDELINES.md    — operating instructions for mesh agents
+    ├── DEPLOY.md              — deployment guide
+    └── STRESS_TEST_PLAN.md    — test scenarios
 ```
 
-### Dream cycle path (nightly)
+---
 
-```
-1. Cron triggers dream-cycle.mjs at 2-3 AM
-2. Reads all memory/mesh/*.md and memory/lcm/*.md from last 24h
-3. Builds consolidation prompt
-4. Calls OpenClaw agent API for MEMORY.md suggestions
-5. Writes dream-cycle-YYYY-MM-DD.md for human review
-6. Erik approves and merges into MEMORY.md
-```
+## What's Built vs What's Designed
 
-## MemoryEvent Schema
+| Component | Status |
+|-----------|--------|
+| LCM integration (memory-bridge) | ✅ Built |
+| Dream cycle | ✅ Built |
+| Privacy filter | ✅ Built |
+| Lesson tagging | ✅ Built |
+| Agent guidelines | ✅ Written |
+| Setup / token exchange | ✅ Built |
+| Always-on relay pipeline | ✅ Built (deprioritized) |
+| Thread proposal (A2A) | 🔲 Designed, not built |
+| Thread consent handler | 🔲 Designed, not built |
+| User notification gate | 🔲 Designed, not built |
+| Shared thread context | 🔲 Designed, not built |
+| Thread close + archival | 🔲 Designed, not built |
+| Token expiry / rotation | 🔲 Not yet built |
+| Queue persistence + replay | 🔲 Not yet built |
+| Storage rotation / pruning | 🔲 Not yet built |
 
-```json
-{
-  "agentId": "liz",
-  "sessionKey": "session-abc123",
-  "role": "assistant",
-  "content": "The deployment finished successfully...",
-  "timestamp": "2026-03-21T14:30:00.000Z"
-}
-```
+---
 
-## Components
+## Design Decisions Log
 
-### memory-watcher.mjs
-- Watches session JSONL paths via chokidar
-- Tracks byte offsets per file for efficient delta reads
-- Filters: skips tool calls, system messages, short content
-- Emits MemoryEvents to the relay
+**2026-03-21 — Relay pipeline deprioritized**
+The always-on relay (watcher → relay → receiver) was built first but creates sycophancy risk: agents sharing all context converge on one perspective, eroding the independence that makes multi-agent systems valuable. Session cohesion for each agent is the primary value. The relay pipeline is retained in the codebase but is not the recommended deployment path.
 
-### memory-relay.mjs
-- Sends events to all peers via HTTP POST (A2A pattern)
-- Rate-limited: max 1 event/second/peer (configurable)
-- Queue-based: events buffer during rate limit windows
-- Graceful: one peer failing doesn't block others
-
-### memory-receiver.mjs
-- Express server on configurable port (default: 18801)
-- Bearer token authentication
-- Validates event structure before writing
-- Appends to daily markdown: `## [HH:MM:SS] agent (role)\ncontent`
-- Health check endpoint at GET /health
-
-### memory-bridge.mjs
-- Polls lcm.db SQLite for new summaries
-- Tracks cursor in ~/.openclaw/mesh-memory-cursor.json
-- Auto-discovers table/column names
-- Writes to memory/lcm/YYYY-MM-DD.md
-
-### dream-cycle.mjs
-- Reads last 24h of mesh + LCM markdown
-- Generates consolidation prompt
-- Calls OpenClaw agent API
-- Writes suggestions (does NOT auto-modify MEMORY.md)
-
-### config.mjs
-- Shared config loader for all modules
-- Reads mesh-memory.config.json from project root
-- Caches after first load
-
-## Latency Targets
-
-| Path | Target | Bottleneck |
-|------|--------|------------|
-| Watcher → Relay | < 500ms | chokidar stabilization (200ms) |
-| Relay → Receiver | < 1s | Network + rate limit |
-| Receiver → QMD | < 30s | QMD indexing interval |
-| **End-to-end (real-time)** | **< 30s** | QMD pickup |
-| Bridge → QMD | < 60s | Poll interval + QMD |
-| Dream cycle | N/A (batch) | Agent API response time |
-
-## Configuration Reference
-
-All config lives in `mesh-memory.config.json`:
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `agentId` | string | — | This agent's identifier |
-| `receiverPort` | number | 18801 | Port for incoming events |
-| `receiverToken` | string | — | Bearer token for auth |
-| `peers` | array | [] | Peer agents to relay to |
-| `peers[].name` | string | — | Peer display name |
-| `peers[].url` | string | — | Peer receiver URL |
-| `peers[].token` | string | — | Peer's bearer token |
-| `watchPaths` | string[] | — | Session JSONL directories |
-| `bridgeInterval` | number | 60 | LCM poll interval (seconds) |
-| `relayRateLimit` | number | 1000 | Min ms between sends per peer |
-| `filter.minContentLength` | number | 20 | Skip short messages |
-| `filter.skipRoles` | string[] | ["tool","system"] | Roles to skip |
-
-## Installation
-
-```bash
-# Clone the repo
-git clone https://github.com/Kosfootel/mesh-memory.git
-cd mesh-memory
-
-# Install dependencies
-npm install
-
-# Edit config
-cp mesh-memory.config.json mesh-memory.config.json
-# Set agentId, receiverToken, and peer URLs
-
-# Start all services
-npm start
-
-# Or run individually
-npm run watcher    # Session file watcher
-npm run receiver   # HTTP event receiver
-npm run bridge     # LCM → QMD bridge
-
-# Set up dream cycle cron
-crontab -e
-# Add: 0 2 * * * cd /path/to/mesh-memory && node dream-cycle.mjs
-```
-
-## How mesh-memory bridges LCM + QMD
-
-This is the core architectural insight:
-
-**LCM** stores rich conversation summaries in SQLite, but they're only accessible to the local agent via SQL queries. Other agents can't see them, and they're not searchable via QMD.
-
-**QMD** indexes markdown files for semantic search, making them available to any agent that can read the filesystem. But QMD doesn't know about LCM's SQLite database.
-
-**mesh-memory** bridges the gap:
-1. `memory-bridge` continuously exports LCM summaries as markdown → QMD picks them up
-2. `memory-relay` + `memory-receiver` propagate real-time messages across agents → written as markdown → QMD picks them up
-3. `dream-cycle` consolidates both streams into actionable MEMORY.md suggestions
-
-The result: every agent in the mesh can search and recall context from every other agent's conversations, with latency under 60 seconds.
-
-## Authors
-
-- **Liz** — AI partner, Better Machine (@LizSquirrelBot)
-- **Erik Ross** — Founder, Better Machine (@Kosfootel)
+**2026-03-21 — Consent-gated thread model adopted**
+Agents negotiate collaboration among themselves first, then present a single consent request to the user. This avoids involving the user in internal agent negotiation while preserving user authority as the final gate. Thread scope is defined at proposal time and does not expand without a new consent cycle.
