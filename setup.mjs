@@ -63,11 +63,12 @@ const flag = (name) => {
   return i !== -1 ? args[i + 1] : null;
 };
 const hasFlag = (name) => args.includes(`--${name}`);
-const DRY_RUN     = hasFlag("dry-run");
-const SKIP_CHECKS = hasFlag("skip-checks");
-const TIMEOUT_SEC = parseInt(flag("timeout") || "300", 10);
-let   AGENT_ID    = flag("agent-id");
-let   PEER_COUNT  = flag("peers") ? parseInt(flag("peers"), 10) : null;
+const DRY_RUN        = hasFlag("dry-run");
+const SKIP_CHECKS    = hasFlag("skip-checks");
+const TIMEOUT_SEC    = parseInt(flag("timeout") || "300", 10);
+let   AGENT_ID       = flag("agent-id");
+let   PEER_COUNT     = flag("peers") ? parseInt(flag("peers"), 10) : null;
+const RECEIVER_PORT  = parseInt(flag("receiver-port") || "18801", 10);
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 const HOME        = homedir();
@@ -213,7 +214,7 @@ if (!AGENT_ID) {
 }
 
 const lanIP = getLANIP();
-const receiverPort = 18801;
+const receiverPort = RECEIVER_PORT;
 const receiverURL = lanIP ? `http://${lanIP}:${receiverPort}` : null;
 
 ok(`Agent ID: ${AGENT_ID}`);
@@ -453,19 +454,19 @@ if (peers.length > 0) {
 
 // ─── 8. POST-INSTALL VERIFICATION ────────────────────────────────────────────
 console.log(`\n${c.bold}${c.white}Post-install verification${c.reset}`);
-info("Checking firewall for port 18801...");
+info(`Checking firewall for port ${receiverPort}...`);
 
 try {
-  const ufwOut = execSync("sudo ufw status 2>/dev/null | grep 18801 || true", {
+  const ufwOut = execSync(`sudo ufw status 2>/dev/null | grep ${receiverPort} || true`, {
     encoding: "utf8", stdio: "pipe"
   }).trim();
   if (!ufwOut) {
-    warn("Port 18801 does not appear to be open in UFW.");
+    warn(`Port ${receiverPort} does not appear to be open in UFW.`);
     warn("Run this now to allow LAN peers to reach your receiver:");
-    console.log(`\n  sudo ufw allow from 192.168.50.0/24 to any port 18801\n  sudo ufw reload\n`);
+    console.log(`\n  sudo ufw allow from 192.168.50.0/24 to any port ${receiverPort}\n  sudo ufw reload\n`);
     warn("Adjust the subnet if your LAN uses a different range.");
   } else {
-    ok("UFW rule found for port 18801");
+    ok(`UFW rule found for port ${receiverPort}`);
   }
 } catch {
   warn("Could not check UFW status — verify firewall manually.");
@@ -492,9 +493,9 @@ ${c.bold}Coordination repo:${c.reset}
   https://github.com/${coordRepoFull}
 
 ${c.bold}What to do next:${c.reset}
-  ${c.dim}1. Open port 18801 in your firewall (see above if not done)${c.reset}
+  ${c.dim}1. Open port ${receiverPort} in your firewall (see above if not done)${c.reset}
   ${c.dim}2. Start receiver on ALL nodes before starting watchers${c.reset}
-  ${c.dim}3. Verify with: curl http://<peer-ip>:18801/health${c.reset}
+  ${c.dim}3. Verify with: curl http://<peer-ip>:${receiverPort}/health${c.reset}
   ${c.dim}4. Run stress-test.mjs before using in production${c.reset}
   ${c.dim}5. See DEPLOY.md for full operational guidance${c.reset}
 `);
