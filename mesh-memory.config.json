@@ -1,0 +1,26 @@
+{
+  "agentId": "liz",
+  "receiverPort": 18801,
+  "receiverToken": "your-receiver-token-here",
+  "peers": [
+    {
+      "name": "ray",
+      "url": "http://192.168.50.22:18801",
+      "token": "ray-receiver-token"
+    },
+    {
+      "name": "woodhouse",
+      "url": "http://192.168.50.24:18801",
+      "token": "woodhouse-receiver-token"
+    }
+  ],
+  "watchPaths": [
+    "~/.openclaw/agents/main/sessions"
+  ],
+  "bridgeInterval": 60,
+  "relayRateLimit": 1000,
+  "filter": {
+    "minContentLength": 20,
+    "skipRoles": ["tool", "system"]
+  }
+}

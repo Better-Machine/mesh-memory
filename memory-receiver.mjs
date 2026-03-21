@@ -1,0 +1,111 @@
+/**
+ * @module memory-receiver
+ * @description Express HTTP server that accepts MemoryEvents from peers
+ * and writes them to QMD-indexed markdown files.
+ */
+
+import express from "express";
+import { mkdir, appendFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { loadConfig } from "./config.mjs";
+
+const MESH_DIR = resolve(homedir(), ".openclaw/workspace/memory/mesh");
+
+/**
+ * Validates incoming MemoryEvent structure.
+ * @param {Object} body - Request body
+ * @returns {string|null} Error message or null if valid
+ */
+function validateEvent(body) {
+  if (!body || typeof body !== "object") return "Body must be a JSON object";
+  if (!body.agentId || typeof body.agentId !== "string")
+    return "Missing or invalid agentId";
+  if (!body.role || typeof body.role !== "string")
+    return "Missing or invalid role";
+  if (!body.content || typeof body.content !== "string")
+    return "Missing or invalid content";
+  if (!body.timestamp || typeof body.timestamp !== "string")
+    return "Missing or invalid timestamp";
+  return null;
+}
+
+/**
+ * Formats a MemoryEvent as a markdown entry.
+ * @param {Object} event - Validated MemoryEvent
+ * @returns {string} Formatted markdown string
+ */
+function formatEntry(event) {
+  const date = new Date(event.timestamp);
+  const time = date.toTimeString().slice(0, 8);
+  return `## [${time}] ${event.agentId} (${event.role})\n${event.content}\n\n`;
+}
+
+/**
+ * Returns the markdown file path for a given date.
+ * @param {Date} date
+ * @returns {string} Absolute file path
+ */
+function getFilePath(date) {
+  const dateStr = date.toISOString().slice(0, 10);
+  return resolve(MESH_DIR, `${dateStr}.md`);
+}
+
+/**
+ * Starts the memory receiver HTTP server.
+ */
+async function main() {
+  const config = loadConfig();
+  const port = config.receiverPort;
+  const token = config.receiverToken;
+
+  await mkdir(MESH_DIR, { recursive: true });
+
+  const app = express();
+  app.use(express.json({ limit: "1mb" }));
+
+  /** Bearer token authentication middleware */
+  app.use("/", (req, res, next) => {
+    const auth = req.headers.authorization;
+    if (!auth || auth !== `Bearer ${token}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    next();
+  });
+
+  /** POST / — Receive a MemoryEvent */
+  app.post("/", async (req, res) => {
+    const error = validateEvent(req.body);
+    if (error) {
+      return res.status(400).json({ error });
+    }
+
+    try {
+      const event = req.body;
+      const filePath = getFilePath(new Date(event.timestamp));
+      const entry = formatEntry(event);
+
+      await appendFile(filePath, entry, "utf-8");
+
+      console.log(
+        `[receiver] Wrote ${event.agentId} (${event.role}) → ${filePath}`
+      );
+      return res.status(200).json({ ok: true });
+    } catch (err) {
+      console.error("[receiver] Write error:", err.message);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /** Health check */
+  app.get("/health", (_req, res) => {
+    res.json({ status: "ok", agent: config.agentId });
+  });
+
+  app.listen(port, () => {
+    console.log(`[receiver] Agent: ${config.agentId}`);
+    console.log(`[receiver] Listening on port ${port}`);
+  });
+}
+
+main();

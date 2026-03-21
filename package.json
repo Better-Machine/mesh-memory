@@ -1,0 +1,25 @@
+{
+  "name": "mesh-memory",
+  "version": "0.1.0",
+  "description": "Per-message cross-agent memory mesh for OpenClaw",
+  "type": "module",
+  "scripts": {
+    "watcher": "node memory-watcher.mjs",
+    "receiver": "node memory-receiver.mjs",
+    "bridge": "node memory-bridge.mjs",
+    "dream": "node dream-cycle.mjs",
+    "stress-test": "node stress-test.mjs",
+    "start": "concurrently \"npm run watcher\" \"npm run receiver\" \"npm run bridge\""
+  },
+  "dependencies": {
+    "express": "^4.18.0",
+    "better-sqlite3": "^9.0.0",
+    "concurrently": "^8.0.0",
+    "chokidar": "^3.6.0"
+  },
+  "authors": [
+    { "name": "Liz", "role": "AI partner, Better Machine", "github": "LizSquirrelBot" },
+    { "name": "Erik Ross", "role": "Founder, Better Machine", "github": "Kosfootel" }
+  ],
+  "license": "MIT"
+}

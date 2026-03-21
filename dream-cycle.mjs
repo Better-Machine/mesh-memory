@@ -1,0 +1,148 @@
+/**
+ * @module dream-cycle
+ * @description Nightly memory consolidation. Reads recent mesh and LCM markdown,
+ * generates MEMORY.md update suggestions via OpenClaw agent API.
+ * Designed to run via cron at 2-3 AM.
+ */
+
+import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { loadConfig } from "./config.mjs";
+
+const MEMORY_BASE = resolve(homedir(), ".openclaw/workspace/memory");
+const MESH_DIR = resolve(MEMORY_BASE, "mesh");
+const LCM_DIR = resolve(MEMORY_BASE, "lcm");
+
+/**
+ * Reads all markdown files from a directory modified in the last 24 hours.
+ * @param {string} dir - Directory path
+ * @returns {Promise<string[]>} Array of file contents
+ */
+async function readRecentFiles(dir) {
+  const contents = [];
+  try {
+    const files = await readdir(dir);
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+
+    for (const file of files) {
+      if (!file.endsWith(".md")) continue;
+      // Extract date from filename (YYYY-MM-DD.md)
+      const dateStr = file.replace(".md", "");
+      const fileDate = new Date(dateStr);
+      if (isNaN(fileDate.getTime()) || fileDate.getTime() < cutoff) continue;
+
+      const content = await readFile(resolve(dir, file), "utf-8");
+      if (content.trim()) {
+        contents.push(`### Source: ${dir}/${file}\n\n${content}`);
+      }
+    }
+  } catch {
+    // Directory may not exist yet
+  }
+  return contents;
+}
+
+/**
+ * Builds the consolidation prompt from recent memory files.
+ * @param {string[]} meshContents - Recent mesh memory entries
+ * @param {string[]} lcmContents - Recent LCM summary entries
+ * @returns {string} Structured prompt for the agent
+ */
+function buildPrompt(meshContents, lcmContents) {
+  return `You are performing a nightly memory consolidation ("dream cycle") for an OpenClaw agent mesh.
+
+Below are all memory entries from the last 24 hours — both real-time mesh events (cross-agent messages) and LCM summaries (local conversation memory).
+
+Your task:
+1. Identify the most important themes, decisions, and context from these entries
+2. Suggest specific additions or updates to MEMORY.md
+3. Flag any contradictions or stale information you notice
+4. Prioritize actionable context that will help agents in future conversations
+
+Format your output as a series of suggested MEMORY.md entries, each with:
+- A clear heading
+- The suggested content
+- Why this should be remembered (brief justification)
+
+---
+
+## Mesh Events (cross-agent messages)
+
+${meshContents.length > 0 ? meshContents.join("\n\n---\n\n") : "(No mesh events in the last 24 hours)"}
+
+---
+
+## LCM Summaries (local conversation memory)
+
+${lcmContents.length > 0 ? lcmContents.join("\n\n---\n\n") : "(No LCM summaries in the last 24 hours)"}
+`;
+}
+
+/**
+ * Calls the OpenClaw agent API to generate consolidation suggestions.
+ * @param {string} prompt - The consolidation prompt
+ * @param {Object} config - Config object
+ * @returns {Promise<string>} Agent response text
+ */
+async function callAgent(prompt, config) {
+  // Use openclaw CLI to send the prompt
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const exec = promisify(execFile);
+
+  try {
+    const { stdout } = await exec("openclaw", [
+      "system", "event",
+      "--text", prompt,
+      "--mode", "queue",
+    ], { timeout: 120000 });
+    return stdout.trim();
+  } catch (err) {
+    // Fallback: write the prompt itself as the suggestion if API is unavailable
+    console.warn("[dream] OpenClaw API unavailable, writing raw prompt as output");
+    return `# Dream Cycle — API Unavailable\n\nThe consolidation prompt was generated but the agent API could not be reached.\nManual review of the raw entries below is recommended.\n\n${prompt}`;
+  }
+}
+
+/**
+ * Runs the dream cycle consolidation.
+ */
+async function main() {
+  const config = loadConfig();
+  const today = new Date().toISOString().slice(0, 10);
+
+  console.log(`[dream] Agent: ${config.agentId}`);
+  console.log(`[dream] Running dream cycle for ${today}`);
+
+  const meshContents = await readRecentFiles(MESH_DIR);
+  const lcmContents = await readRecentFiles(LCM_DIR);
+
+  const totalEntries = meshContents.length + lcmContents.length;
+  console.log(
+    `[dream] Found ${meshContents.length} mesh files, ${lcmContents.length} LCM files`
+  );
+
+  if (totalEntries === 0) {
+    console.log("[dream] No recent entries — skipping consolidation");
+    return;
+  }
+
+  const prompt = buildPrompt(meshContents, lcmContents);
+  console.log(`[dream] Prompt length: ${prompt.length} chars`);
+
+  const suggestions = await callAgent(prompt, config);
+
+  const outputPath = resolve(MEMORY_BASE, `dream-cycle-${today}.md`);
+  await mkdir(MEMORY_BASE, { recursive: true });
+  await writeFile(
+    outputPath,
+    `# Dream Cycle — ${today}\n\n_Generated by mesh-memory dream-cycle for agent: ${config.agentId}_\n\n${suggestions}\n`,
+    "utf-8"
+  );
+
+  console.log(`[dream] Suggestions written to ${outputPath}`);
+  console.log("[dream] Done. Review and approve before merging into MEMORY.md.");
+}
+
+main();
