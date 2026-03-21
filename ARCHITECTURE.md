@@ -152,12 +152,13 @@ mesh-memory/
 │   ├── privacy.mjs            — privacy filter (per-message, session block, keywords)
 │   └── lesson-tagger.mjs      — tag detection and lessons file writer
 │
-├── Collaboration Mesh Layer (v2 — in design)
-│   ├── thread-propose.mjs     — A2A proposal to peers
-│   ├── thread-consent.mjs     — agent consent handler
+├── Collaboration Mesh Layer (v2 — built)
+│   ├── thread-propose.mjs     — standalone HTTP proposal to peers
+│   ├── thread-consent.mjs     — agent consent handler (auto-accept placeholder)
 │   ├── thread-notify.mjs      — user notification after agent consensus
-│   ├── thread-context.mjs     — shared context read/write
-│   └── thread-close.mjs       — cleanup, archival, token revocation
+│   ├── thread-context.mjs     — shared context read/write with ephemeral tokens
+│   ├── thread-close.mjs       — cleanup, archival, token revocation
+│   └── thread-manager.mjs     — orchestrator, port 18802, timeout checker
 │
 ├── Infrastructure (v1 — relay pipeline, deprioritized)
 │   ├── memory-watcher.mjs     — fs.watch on session JSONL (relay trigger)
@@ -189,11 +190,12 @@ mesh-memory/
 | Agent guidelines | ✅ Written |
 | Setup / token exchange | ✅ Built |
 | Always-on relay pipeline | ✅ Built (deprioritized) |
-| Thread proposal (A2A) | 🔲 Designed, not built |
-| Thread consent handler | 🔲 Designed, not built |
-| User notification gate | 🔲 Designed, not built |
-| Shared thread context | 🔲 Designed, not built |
-| Thread close + archival | 🔲 Designed, not built |
+| Thread proposal (standalone HTTP) | ✅ Built |
+| Thread consent handler | ✅ Built |
+| User notification gate | ✅ Built |
+| Shared thread context | ✅ Built |
+| Thread close + archival | ✅ Built |
+| Thread manager (orchestrator) | ✅ Built |
 | Token expiry / rotation | 🔲 Not yet built |
 | Queue persistence + replay | 🔲 Not yet built |
 | Storage rotation / pruning | 🔲 Not yet built |

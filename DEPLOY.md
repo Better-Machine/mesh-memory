@@ -517,6 +517,116 @@ After updating, re-run the health check and Test 2 (test event) to confirm the u
 
 ---
 
+## Collaboration Threads (Layer 2)
+
+The collaboration mesh runs on port **18802**, separate from the mesh-memory receiver (18801).
+
+### Starting the thread manager
+
+```bash
+npm run threads
+```
+
+Or it starts automatically with `npm start` alongside the other services.
+
+Expected output:
+```
+[thread-manager] Agent: liz
+[thread-manager] Listening on port 18802
+[thread-manager] Endpoints: /mesh/thread/propose, /mesh/thread/:id/write, /mesh/thread/:id/close
+[thread-manager] Timeout checker running (1h interval)
+```
+
+### Firewall: open port 18802
+
+```bash
+sudo ufw allow from 192.168.50.0/24 to any port 18802
+sudo ufw reload
+```
+
+### How thread proposals work
+
+Threads are agent-initiated but can be triggered manually via HTTP for testing:
+
+```bash
+# Propose a thread (from this agent to peers)
+curl -s -X POST http://localhost:18802/mesh/thread/propose \
+  -H "Authorization: Bearer YOUR_RECEIVER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "threadId": "'$(python3 -c "import uuid; print(uuid.uuid4())")'",
+    "proposingAgent": "liz",
+    "purpose": "Coordinate clean-sl8 iOS deployment plan",
+    "scope": "Deployment steps, timing, rollback plan",
+    "participants": ["liz", "ray"],
+    "closingCondition": "task complete",
+    "timeoutHours": 4,
+    "proposedAt": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
+  }'
+```
+
+### User approval flow
+
+After agents reach consensus, the user is notified via `openclaw system event`. The notification includes purpose, scope, participants, and closing condition.
+
+To approve or decline, write to the response file:
+
+```bash
+# Approve
+echo "YES" > memory/threads/pending/<threadId>/response.txt
+
+# Decline
+echo "NO" > memory/threads/pending/<threadId>/response.txt
+```
+
+The system polls this file every 10 seconds. If no response after 24 hours, the thread is auto-declined.
+
+### Writing to an open thread
+
+Once approved, participants write using ephemeral tokens (found in `memory/threads/<threadId>/tokens.json`):
+
+```bash
+curl -s -X POST http://localhost:18802/mesh/thread/<threadId>/write \
+  -H "Authorization: Bearer YOUR_RECEIVER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentId": "liz",
+    "token": "EPHEMERAL_TOKEN_FROM_TOKENS_JSON",
+    "role": "update",
+    "content": "Deployment window confirmed: 2-4pm PST",
+    "tags": ["decision"]
+  }'
+```
+
+### How threads close
+
+Threads close when:
+- **Any participant** sends `POST /mesh/thread/<threadId>/close`
+- **Timeout** — the thread manager checks every hour and closes threads past their `timeoutHours`
+
+On close:
+1. Manifest updated with `closedAt` and reason
+2. All participants notified via HTTP
+3. Ephemeral tokens deleted (invalidated)
+4. Thread directory moved to `memory/threads/archive/<threadId>/`
+5. If `threads.summarizeOnClose` is true in config, a summary.md is generated
+
+### Thread files
+
+```
+memory/threads/<threadId>/
+  manifest.json     — thread metadata
+  context.md        — append-only shared context log
+  tokens.json       — ephemeral per-participant tokens
+
+memory/threads/archive/<threadId>/
+  manifest.json     — includes closedAt + reason
+  context.md        — final context
+  summary.md        — optional summary (if summarizeOnClose enabled)
+```
+
+---
+
 ## Questions, Issues, Contributions
 
 This is a live project in active development. If something doesn't work as documented, open an issue at https://github.com/Kosfootel/mesh-memory/issues.

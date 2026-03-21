@@ -10,7 +10,8 @@
     "bridge": "node memory-bridge.mjs",
     "dream": "node dream-cycle.mjs",
     "stress-test": "node stress-test.mjs",
-    "start": "concurrently \"npm run watcher\" \"npm run receiver\" \"npm run bridge\""
+    "threads": "node thread-manager.mjs",
+    "start": "concurrently \"npm run watcher\" \"npm run receiver\" \"npm run bridge\" \"npm run threads\""
   },
   "dependencies": {
     "express": "^4.18.0",
