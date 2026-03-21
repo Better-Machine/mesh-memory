@@ -33,6 +33,7 @@ import { promisify } from "node:util";
 import crypto from "node:crypto";
 import https from "node:https";
 import http from "node:http";
+import { discoverConfiguredGroups } from "./identity-resolver.mjs";
 
 const exec = promisify(execCb);
 
@@ -309,29 +310,67 @@ if (!reg.contacts[selfKey]) {
   ok(`Self identity already registered: ${reg.contacts[selfKey].name}`);
 }
 
-// ── 3b. Auto-discover humans from OpenClaw groupAllowFrom ───────────────────
+// ── 3b. Auto-discover humans from OpenClaw allowlists (all channels) ────────
 const openClawCfg = readOpenClawConfig();
-const allowFrom = openClawCfg?.channels?.telegram?.groupAllowFrom || [];
+const channelsCfg = openClawCfg?.channels || {};
 
-if (allowFrom.length > 0) {
-  info(`Found ${allowFrom.length} Telegram user(s) in OpenClaw allowlist.`);
-  for (const userId of allowFrom) {
-    const key = `telegram:${userId}`;
-    if (reg.contacts[key]) {
-      ok(`  Already known: ${reg.contacts[key].name} (${key})`);
-      continue;
-    }
-    warn(`  Unknown Telegram user: ${userId}`);
-    const identity = await promptIdentity(key, "telegram", userId);
-    reg.contacts[key] = identity;
-    contactsChanged = true;
-    ok(`  Registered: ${identity.name}`);
-  }
-} else {
-  info("No Telegram allowlist found in openclaw.json — skipping human auto-discovery.");
+// Collect allowFrom across all channels that support it
+const allowFromByChannel = {};
+for (const [ch, cfg] of Object.entries(channelsCfg)) {
+  const ids = cfg?.allowFrom || cfg?.groupAllowFrom || [];
+  if (ids.length > 0) allowFromByChannel[ch] = ids;
 }
 
-// ── 3c. Auto-discover agents from A2A peer cards ─────────────────────────────
+const totalAllowFrom = Object.values(allowFromByChannel).flat().length;
+if (totalAllowFrom > 0) {
+  info(`Found ${totalAllowFrom} user(s) across ${Object.keys(allowFromByChannel).length} channel(s).`);
+  for (const [ch, ids] of Object.entries(allowFromByChannel)) {
+    for (const userId of ids) {
+      const key = `${ch}:${userId}`;
+      if (reg.contacts[key]) {
+        ok(`  Already known: ${reg.contacts[key].name} (${key})`);
+        continue;
+      }
+      warn(`  Unknown ${ch} user: ${userId}`);
+      const identity = await promptIdentity(key, ch, userId);
+      reg.contacts[key] = identity;
+      contactsChanged = true;
+      ok(`  Registered: ${identity.name}`);
+    }
+  }
+} else {
+  info("No user allowlists found in openclaw.json — skipping human auto-discovery.");
+}
+
+// ── 3c. Auto-discover group chats / channels / rooms (all platforms) ─────────
+info("\nDiscovering configured group chats across all channels...");
+const unknownGroups = discoverConfiguredGroups(channelsCfg);
+
+if (unknownGroups.length > 0) {
+  info(`Found ${unknownGroups.length} unconfigured group(s)/channel(s).`);
+  for (const g of unknownGroups) {
+    warn(`  Unknown ${g.channel} ${g.contextType}: ${g.contextId}`);
+    const name = (await prompt(`  Name for this ${g.contextType} [${g.contextId}]:`)).trim() || g.contextId;
+    const purpose = (await prompt(`  Purpose (e.g. "clean-sl8 project collaboration"):`)).trim();
+    const projectsRaw = (await prompt(`  Related projects (comma-separated, optional):`)).trim();
+    const projects = projectsRaw ? projectsRaw.split(",").map(p => p.trim()).filter(Boolean) : [];
+    reg.contacts[g.key] = {
+      name,
+      purpose: purpose || undefined,
+      projects: projects.length ? projects : undefined,
+      channel: g.channel,
+      contextType: g.contextType,
+      contextId: g.contextId,
+      _registeredAt: new Date().toISOString(),
+    };
+    contactsChanged = true;
+    ok(`  Registered ${g.contextType}: ${name}`);
+  }
+} else {
+  ok("All configured groups/channels already registered.");
+}
+
+// ── 3d. Auto-discover agents from A2A peer cards ─────────────────────────────
 info("\nAttempting to auto-discover peer agents via A2A...");
 // Common LAN IPs to probe — covers typical small mesh setups
 const subnet = lanIP ? lanIP.split(".").slice(0, 3).join(".") : "192.168.50";
@@ -386,7 +425,7 @@ for (const url of probeCandidates) {
   ok(`  Registered agent: ${confirmedName}`);
 }
 
-// ── 3d. Manual additions ─────────────────────────────────────────────────────
+// ── 3e. Manual additions ─────────────────────────────────────────────────────
 const addMore = (await prompt("\nAdd any additional identities manually? (y/N):")).trim().toLowerCase();
 if (addMore === "y") {
   let adding = true;

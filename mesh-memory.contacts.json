@@ -54,6 +54,24 @@
       "channel": "agent"
     }
   },
+  "group:telegram:-5095804687": {
+    "name": "Agent Chat",
+    "purpose": "Internal agent-to-agent coordination",
+    "projects": ["better-machine", "agentcy.services"],
+    "channel": "telegram",
+    "contextType": "group",
+    "contextId": "-5095804687",
+    "_registeredAt": "2026-03-21T00:00:00.000Z"
+  },
+  "group:telegram:-5140439253": {
+    "name": "Clean-SL8 Group",
+    "purpose": "Clean-sl8 project collaboration — Erik, Christian, Liz",
+    "projects": ["clean-sl8"],
+    "channel": "telegram",
+    "contextType": "group",
+    "contextId": "-5140439253",
+    "_registeredAt": "2026-03-21T00:00:00.000Z"
+  },
   "unknownBehavior": "flag",
   "_unknownBehavior_options": "flag | ignore | block",
   "_flagged": []

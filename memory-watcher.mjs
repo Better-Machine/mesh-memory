@@ -12,7 +12,7 @@ import { relayEvent } from "./memory-relay.mjs";
 import { loadConfig } from "./config.mjs";
 import { evaluatePrivacy, privacySensitivityHints } from "./privacy.mjs";
 import { detectTags, taggingSuggestion } from "./lesson-tagger.mjs";
-import { resolveIdentity, formatIdentityTag } from "./identity-resolver.mjs";
+import { resolveConversation } from "./identity-resolver.mjs";
 
 /**
  * @typedef {Object} MemoryEvent
@@ -70,17 +70,11 @@ function parseMessage(line, sessionKey, config) {
 
     if (!content || content.length < config.filter.minContentLength) return null;
 
-    // ── Identity resolution ─────────────────────────────────────────────
-    // Try to resolve sender from message metadata (inbound context)
-    const channel = msg.metadata?.channel || msg.channel || null;
-    const senderId = msg.metadata?.sender_id || msg.sender_id || null;
-    let identity = null;
-    let identityTag = "";
-
-    if (channel && senderId && role === "user") {
-      identity = resolveIdentity(channel, String(senderId));
-      identityTag = formatIdentityTag(identity);
-    }
+    // ── Identity + context resolution ───────────────────────────────────
+    // Attach sessionKey to msg so resolveConversation can parse group context
+    const msgWithSession = { ...msg, sessionKey, role };
+    const { identity, context, identityTag, contextTag, fullTag } =
+      role === "user" ? resolveConversation(msgWithSession) : {};
 
     return {
       agentId: config.agentId,
@@ -88,8 +82,11 @@ function parseMessage(line, sessionKey, config) {
       role,
       content,
       timestamp: msg.timestamp || new Date().toISOString(),
-      ...(identity ? { identity } : {}),
+      ...(identity   ? { identity }   : {}),
+      ...(context    ? { context }    : {}),
       ...(identityTag ? { identityTag } : {}),
+      ...(contextTag  ? { contextTag }  : {}),
+      ...(fullTag     ? { fullTag }     : {}),
     };
   } catch {
     return null;
@@ -153,7 +150,7 @@ async function handleFileChange(filePath, config) {
         }
 
         console.log(
-          `[watcher] ${event.role} message from session ${sessionKey} (${event.content.length} chars)${event.identityTag ? ` ${event.identityTag}` : ""}${event.tags ? ` [${event.tags.join(", ")}]` : ""}`
+          `[watcher] ${event.role} message from session ${sessionKey} (${event.content.length} chars)${event.fullTag ? ` ${event.fullTag}` : event.identityTag ? ` ${event.identityTag}` : ""}${event.tags ? ` [${event.tags.join(", ")}]` : ""}`
         );
         await relayEvent(event, config);
       }
