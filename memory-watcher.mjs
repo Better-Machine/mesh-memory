@@ -10,6 +10,8 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { relayEvent } from "./memory-relay.mjs";
 import { loadConfig } from "./config.mjs";
+import { evaluatePrivacy, privacySensitivityHints } from "./privacy.mjs";
+import { detectTags, taggingSuggestion } from "./lesson-tagger.mjs";
 
 /**
  * @typedef {Object} MemoryEvent
@@ -91,8 +93,52 @@ async function handleFileChange(filePath, config) {
     for (const line of lines) {
       const event = parseMessage(line, sessionKey, config);
       if (event) {
+        // ── Privacy filter ──────────────────────────────────────────────
+        const privacy = evaluatePrivacy(sessionKey, event.content, config);
+
+        if (privacy.action === "command") {
+          console.log(`[watcher] Privacy command in session ${sessionKey}: ${privacy.reason}`);
+          continue;
+        }
+
+        if (privacy.action === "suppress") {
+          console.log(`[watcher] 🔒 Suppressed (${privacy.reason}): session ${sessionKey}`);
+          // Write a redacted notice locally so peers know a gap exists
+          event.content = "[redacted — private message]";
+          event.suppressed = true;
+          // Do NOT relay suppressed messages
+          continue;
+        }
+
+        // ── Privacy sensitivity hints (agent awareness) ─────────────────
+        if (event.role === "user") {
+          const hints = privacySensitivityHints(event.content);
+          if (hints.shouldAsk) {
+            console.log(`[watcher] 🔍 Sensitivity signals detected: ${hints.signals.join(", ")}`);
+            // Attach hints to event so receiving agent can surface them
+            event.privacyHints = hints.signals;
+          }
+        }
+
+        // ── Lesson / correction tagging ─────────────────────────────────
+        const tagResult = detectTags(event.content);
+        if (tagResult.isTagged) {
+          console.log(`[watcher] 🏷  Tags detected: [${tagResult.tags.join(", ")}]`);
+          event.tags = tagResult.tags;
+          event.content = tagResult.cleanContent;
+        }
+
+        // ── Tagging suggestion for assistant messages ────────────────────
+        if (event.role === "assistant") {
+          const suggestion = taggingSuggestion(event.content, event.role);
+          if (suggestion.shouldTag) {
+            console.log(`[watcher] 💡 Suggest tagging as [${suggestion.suggestedTag}]: ${suggestion.reason}`);
+            event.suggestedTag = suggestion.suggestedTag;
+          }
+        }
+
         console.log(
-          `[watcher] ${event.role} message from session ${sessionKey} (${event.content.length} chars)`
+          `[watcher] ${event.role} message from session ${sessionKey} (${event.content.length} chars)${event.tags ? ` [${event.tags.join(", ")}]` : ""}`
         );
         await relayEvent(event, config);
       }

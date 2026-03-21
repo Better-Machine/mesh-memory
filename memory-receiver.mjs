@@ -9,6 +9,7 @@ import { mkdir, appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { loadConfig } from "./config.mjs";
+import { detectTags, writeLessonEntry } from "./lesson-tagger.mjs";
 
 const MESH_DIR = resolve(homedir(), ".openclaw/workspace/memory/mesh");
 
@@ -83,9 +84,43 @@ async function main() {
     try {
       const event = req.body;
       const filePath = getFilePath(new Date(event.timestamp));
-      const entry = formatEntry(event);
 
+      // ── Lesson / correction tagging ────────────────────────────────
+      // Tags may have been detected at the source watcher, or we re-detect
+      // here for events from agents that don't run the watcher.
+      const tagResult = event.tags
+        ? { tags: event.tags, isTagged: true, cleanContent: event.content }
+        : detectTags(event.content);
+
+      if (tagResult.isTagged) {
+        // Write to lessons log
+        await writeLessonEntry(
+          { ...event, content: event.content },
+          tagResult.tags,
+          tagResult.cleanContent
+        );
+        console.log(
+          `[receiver] 🏷  Lesson entry written: [${tagResult.tags.join(", ")}] from ${event.agentId}`
+        );
+      }
+
+      // ── Write to main mesh log ─────────────────────────────────────
+      const entry = formatEntry(event);
       await appendFile(filePath, entry, "utf-8");
+
+      // ── Privacy hint logging ───────────────────────────────────────
+      if (event.privacyHints && event.privacyHints.length > 0) {
+        console.log(
+          `[receiver] 🔍 Privacy signals from ${event.agentId}: ${event.privacyHints.join(", ")}`
+        );
+      }
+
+      // ── Suggested tag logging ──────────────────────────────────────
+      if (event.suggestedTag) {
+        console.log(
+          `[receiver] 💡 Source watcher suggests tagging as [${event.suggestedTag}]`
+        );
+      }
 
       console.log(
         `[receiver] Wrote ${event.agentId} (${event.role}) → ${filePath}`
