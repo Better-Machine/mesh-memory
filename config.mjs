@@ -28,3 +28,11 @@ export function loadConfig() {
     process.exit(1);
   }
 }
+
+/**
+ * Resets the cached config so the next loadConfig() re-reads from disk.
+ * Used by tests that swap config files.
+ */
+export function resetConfig() {
+  _config = null;
+}
