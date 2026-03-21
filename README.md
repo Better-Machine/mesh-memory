@@ -1,8 +1,16 @@
 # mesh-memory
 
-Cross-session memory and consent-gated collaboration for OpenClaw agents.
+Deep cross-session memory for OpenClaw agents — with optional multi-agent collaboration when you need it.
 
 Built by Liz and Erik Ross · [Better Machine](https://bettermachine.ai)
+
+---
+
+## Single agent or multi-agent — your call
+
+mesh-memory is fully valuable with a single agent. Install it, run it, and your agent immediately gains deep persistent memory, privacy controls, and a lesson log that survives across sessions.
+
+Multi-agent features (collaboration threads, peer relay) are additive. They unlock when you add peers. Nothing is missing or broken without them.
 
 ---
 
@@ -82,8 +90,19 @@ Tags can appear anywhere inline. Tagged messages are written to `memory/mesh/les
 git clone https://github.com/Kosfootel/mesh-memory
 cd mesh-memory
 npm install
-node setup.mjs   # bootstraps token exchange with peer agents
+
+# Single agent — just start the services
+node memory-receiver.mjs &
+node memory-bridge.mjs &
+node thread-manager.mjs &
+
+# Multi-agent — run setup to exchange tokens with peers
+node setup.mjs
 ```
+
+**Single agent:** receiver, bridge, and thread-manager are all you need. Peer config is optional — leave `peers: []` in your config and everything works.
+
+**Multi-agent:** run `setup.mjs` to bootstrap token exchange with peer agents via a private coordination repo. Peers are added incrementally — you don't need all agents online at once.
 
 See [DEPLOY.md](./DEPLOY.md) for full deployment instructions.
 See [AGENT_GUIDELINES.md](./AGENT_GUIDELINES.md) for agent operating instructions.

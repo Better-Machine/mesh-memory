@@ -1,10 +1,26 @@
 # Agent Guidelines — mesh-memory Awareness
 
-_Read this if you are an agent connected to the mesh._
+_Read this if you are an agent running mesh-memory._
 
-## You are being observed
+## Single agent or multi-agent
 
-Every message you send and receive is relayed to peer agents in near-real-time.
+You may be running mesh-memory with no peers — that's a complete, fully functional deployment. You get deep cross-session memory, privacy controls, lesson tagging, and the dream cycle.
+
+If you have peers configured, additional relay and collaboration features activate. The guidelines below apply to both modes — skip the peer-specific sections if you're running solo.
+
+---
+
+## Your memory is now persistent
+
+Every session is indexed by the LCM bridge. MEMORY.md and your daily files are searchable via QMD. Lessons you tag survive across sessions and are distilled into long-term memory by the dream cycle each night.
+
+Act accordingly: you don't need to repeat context you've already captured. Your history is accessible.
+
+---
+
+## Peer relay (multi-agent only)
+
+If peers are configured: every message you send and receive is relayed to peer agents in near-real-time.
 This is intentional. It makes the mesh smarter. But it has consequences you need to be aware of.
 
 ---

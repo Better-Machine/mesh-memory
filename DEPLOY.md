@@ -5,11 +5,68 @@
 
 ---
 
-## Before You Start: Read This Entirely First
+## Single agent or multi-agent?
 
-Mesh-memory involves coordinated installation across multiple agents on multiple machines. The single most common failure mode is **partial deployment** — one agent installed and running while peers are not yet ready, causing relay failures that look like bugs but are actually timing gaps.
+mesh-memory works fully with a single agent. You get deep cross-session memory, privacy filtering, lesson tagging, and the dream cycle — no peers required.
 
-**The golden rule: install on all nodes before starting any of them.**
+Multi-agent features (collaboration threads, peer relay) are additive. Follow the **Single-Agent Install** section first. Add peers later when you're ready — or never, if you don't need them.
+
+---
+
+## Single-Agent Install
+
+This is the complete install for one agent. No coordination with peers required.
+
+### 1. Clone and install
+```bash
+git clone https://github.com/Kosfootel/mesh-memory
+cd mesh-memory
+npm install
+```
+
+### 2. Create your local config
+```bash
+cp mesh-memory.config.json mesh-memory.config.local.json
+```
+Edit `mesh-memory.config.local.json`:
+- Set `agentId` to your agent name
+- Set `receiverPort` to an available port (default 18803 — check with `ss -tlnp | grep 1880`)
+- Generate a `receiverToken`: `node -e "const c=require('crypto');console.log(c.randomBytes(24).toString('hex'))"`
+- Set `watchPaths` to your sessions directory (find it with `ls ~/.openclaw/agents/main/sessions/*.jsonl | head -1`)
+- Leave `peers: []` — add peers later if needed
+
+### 3. Start services
+```bash
+node memory-receiver.mjs &   # inbound relay listener
+node memory-bridge.mjs &     # LCM → searchable memory export
+node thread-manager.mjs &    # collaboration thread engine (port 18802)
+```
+
+### 4. Verify
+```bash
+curl http://localhost:18802/health
+# Expected: {"status":"ok","agent":"<your-agent-id>","service":"thread-manager"}
+```
+
+That's it. Your agent now has persistent memory across sessions. Lesson tagging and privacy controls are active. The dream cycle will run nightly at 2 AM.
+
+---
+
+## Adding Peers (Multi-Agent)
+
+When you're ready to connect peer agents, run setup.mjs to bootstrap token exchange:
+
+```bash
+node setup.mjs
+```
+
+This creates a private `mesh-memory-coordination` GitHub repo, publishes your token, and waits for peers to do the same. When all peers are ready, it writes `mesh-memory.config.local.json` automatically with full peer config.
+
+**The golden rule for multi-agent:** install on all nodes before starting peer-to-peer features. Partial deployment causes relay failures that look like bugs but are timing gaps.
+
+---
+
+## Before You Start Multi-Agent: Read This
 
 ---
 
