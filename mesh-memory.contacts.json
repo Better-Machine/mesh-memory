@@ -8,7 +8,7 @@
       "role": "founder",
       "relationship": "owner",
       "projects": ["better-machine", "door$", "localzon", "hockeyops.ai", "clean-sl8"],
-      "notes": "Founder of Better Machine. Primary human collaborator.",
+      "notes": "Founder of Better Machine. 53-year-old technologist and dreamer. Embraced AI instead of fighting it. Named agents after Bobby Ray (deceased mentor) and Liz (Ray's wife).",
       "channel": "telegram"
     },
     "telegram:6167756653": {
@@ -17,8 +17,41 @@
       "role": "co-founder",
       "relationship": "collaborator",
       "projects": ["clean-sl8"],
-      "notes": "Co-founder of clean-sl8. Digital marketing and real estate background. Origin story: sold $1M home, vengeful seller remotely manipulated smart home devices post-closing.",
+      "notes": "Co-founder of clean-sl8. Digital marketing and real estate background. Origin: sold $1M home, vengeful seller remotely manipulated smart home devices post-closing.",
       "channel": "telegram"
+    },
+    "agent:liz": {
+      "name": "Liz",
+      "username": "LIzSquirrelBot",
+      "role": "agent",
+      "relationship": "peer",
+      "machine": "192.168.50.23",
+      "projects": ["better-machine", "door$", "localzon", "hockeyops.ai", "clean-sl8", "mesh-memory"],
+      "a2a": "http://192.168.50.23:18800",
+      "notes": "Named after Ray's wife — pixie-fierce, squirrel keeper. Primary agent on secondary machine. Works with Erik on all Better Machine projects.",
+      "channel": "agent"
+    },
+    "agent:ray": {
+      "name": "Ray (BobbyRay)",
+      "username": "BobbyRaybot",
+      "role": "agent",
+      "relationship": "peer",
+      "machine": "192.168.50.22",
+      "projects": ["agentcy.services"],
+      "a2a": "http://192.168.50.22:18800",
+      "notes": "Named after Bobby Ray — Erik's deceased mentor and surrogate older brother, Robert Raymond. Primary agent on primary machine. Running Agentcy.services.",
+      "channel": "agent"
+    },
+    "agent:woodhouse": {
+      "name": "Woodhouse",
+      "username": "AHWoodhousebot",
+      "role": "agent",
+      "relationship": "peer",
+      "machine": "192.168.50.24",
+      "projects": ["better-machine"],
+      "a2a": "http://192.168.50.24:18800",
+      "notes": "Erik's personal assistant agent. Named after the loyal valet from Archer. Runs on macOS.",
+      "channel": "agent"
     }
   },
   "unknownBehavior": "flag",
