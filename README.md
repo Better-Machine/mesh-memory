@@ -1,5 +1,7 @@
 # mesh-memory
 
+![Status: Active](https://img.shields.io/badge/Status-Active-brightgreen)
+
 Persistent cross-session memory for OpenClaw agents.
 
 Built by Liz and Erik Ross · [Better Machine](https://bettermachine.ai)
@@ -34,10 +36,8 @@ git clone https://github.com/Kosfootel/mesh-memory
 cd mesh-memory
 npm install
 cp mesh-memory.config.json mesh-memory.config.local.json
-# edit config.local.json — set agentId, receiverToken, watchPaths
-node memory-receiver.mjs &
-node memory-bridge.mjs &
-node thread-manager.mjs &
+# edit config.local.json — set agentId, receiverToken (default port: 18803), watchPaths
+npm start
 ```
 
 See [DEPLOY.md](./DEPLOY.md) for full step-by-step instructions.

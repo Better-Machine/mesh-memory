@@ -5,14 +5,18 @@
  */
 
 import { watch } from "chokidar";
-import { readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, stat, mkdir, appendFile } from "node:fs/promises";
+import { resolve, dirname } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { relayEvent } from "./memory-relay.mjs";
 import { loadConfig } from "./config.mjs";
 import { evaluatePrivacy, privacySensitivityHints } from "./privacy.mjs";
-import { detectTags, taggingSuggestion } from "./lesson-tagger.mjs";
+import { detectTags, taggingSuggestion, writeLessonEntry } from "./lesson-tagger.mjs";
 import { resolveConversation } from "./identity-resolver.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const LOCAL_MESH_DIR = resolve(__dirname, "memory/mesh");
 
 /**
  * @typedef {Object} MemoryEvent
@@ -94,7 +98,41 @@ function parseMessage(line, sessionKey, config) {
 }
 
 /**
- * Handles a file change event — reads delta, parses, and relays.
+ * Formats a MemoryEvent as a markdown entry for local storage.
+ * @param {Object} event - MemoryEvent
+ * @returns {string} Formatted markdown string
+ */
+function formatEntry(event) {
+  const date = new Date(event.timestamp);
+  const time = date.toTimeString().slice(0, 8);
+
+  const contextLine = event.fullTag
+    ? ` ${event.fullTag}`
+    : event.identityTag
+      ? ` ${event.identityTag}${event.contextTag ? ` ${event.contextTag}` : ""}`
+      : "";
+
+  const tagLine = event.tags?.length
+    ? `\n> tags: ${event.tags.map(t => `[${t}]`).join(" ")}`
+    : "";
+
+  return `## [${time}] ${event.agentId} (${event.role})${contextLine}${tagLine}\n${event.content}\n\n`;
+}
+
+/**
+ * Writes a MemoryEvent to local mesh memory (memory/mesh/YYYY-MM-DD.md).
+ * @param {Object} event - MemoryEvent
+ */
+async function writeLocal(event) {
+  await mkdir(LOCAL_MESH_DIR, { recursive: true });
+  const dateStr = new Date(event.timestamp).toISOString().slice(0, 10);
+  const filePath = resolve(LOCAL_MESH_DIR, `${dateStr}.md`);
+  const entry = formatEntry(event);
+  await appendFile(filePath, entry, "utf-8");
+}
+
+/**
+ * Handles a file change event — reads delta, parses, writes locally, and relays.
  * @param {string} filePath - Path to the changed file
  * @param {Object} config - Config object
  */
@@ -147,6 +185,14 @@ async function handleFileChange(filePath, config) {
             console.log(`[watcher] 💡 Suggest tagging as [${suggestion.suggestedTag}]: ${suggestion.reason}`);
             event.suggestedTag = suggestion.suggestedTag;
           }
+        }
+
+        // ── Local write (primary use case) ──────────────────────────
+        await writeLocal(event);
+
+        // ── Write tagged entries to lessons log ──────────────────────
+        if (event.tags?.length) {
+          await writeLessonEntry(event, event.tags, event.content);
         }
 
         console.log(

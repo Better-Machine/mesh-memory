@@ -1,3 +1,9 @@
 node_modules/
-stress-test-report.md
 mesh-memory.config.local.json
+memory/mesh/
+memory/lcm/
+memory/threads/
+*.log
+.env
+mesh-memory-coordination/
+stress-test-report.md

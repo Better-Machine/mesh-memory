@@ -1,6 +1,6 @@
 {
   "agentId": "liz",
-  "receiverPort": 18801,
+  "receiverPort": 18803,
   "receiverToken": "your-receiver-token-here",
   "peers": [
     {
