@@ -80,7 +80,8 @@ const COORD_REPO  = "mesh-memory-coordination";  // canonical repo name — do n
 // ─── Utilities ───────────────────────────────────────────────────────────────
 function run(cmd, opts = {}) {
   if (DRY_RUN) { dim(`[dry-run] ${cmd}`); return ""; }
-  return execSync(cmd, { encoding: "utf8", stdio: opts.silent ? "pipe" : "inherit", ...opts }).trim();
+  const result = execSync(cmd, { encoding: "utf8", stdio: opts.silent ? "pipe" : "inherit", ...opts });
+  return (result || "").trim();
 }
 
 async function runAsync(cmd) {
