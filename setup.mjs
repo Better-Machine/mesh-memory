@@ -227,7 +227,7 @@ if (lanIP) {
   ok(`Receiver URL will be: ${receiverURL}`);
 } else {
   warn("Could not auto-detect LAN IP.");
-  const manualIP = await prompt("Enter this machine's LAN IP address (e.g. 192.168.50.23):");
+  const manualIP = await prompt("Enter this machine's LAN IP address (e.g. 192.168.1.23):");
   if (!manualIP.trim()) {
     fail("LAN IP is required for peers to reach this receiver.");
     process.exit(1);
@@ -373,12 +373,12 @@ if (unknownGroups.length > 0) {
 // ── 3d. Auto-discover agents from A2A peer cards ─────────────────────────────
 info("\nAttempting to auto-discover peer agents via A2A...");
 // Common LAN IPs to probe — covers typical small mesh setups
-const subnet = lanIP ? lanIP.split(".").slice(0, 3).join(".") : "192.168.50";
+const subnet = lanIP ? lanIP.split(".").slice(0, 3).join(".") : "192.168.1";
 const probeCandidates = [
-  `http://${subnet}.22:18800`,
-  `http://${subnet}.23:18800`,
-  `http://${subnet}.24:18800`,
-  `http://${subnet}.25:18800`,
+  `http://${subnet}.1:18800`,
+  `http://${subnet}.2:18800`,
+  `http://${subnet}.3:18800`,
+  `http://${subnet}.4:18800`,
 ];
 
 for (const url of probeCandidates) {
@@ -692,7 +692,7 @@ try {
   if (!ufwOut) {
     warn(`Port ${receiverPort} does not appear to be open in UFW.`);
     warn("Run this now to allow LAN peers to reach your receiver:");
-    console.log(`\n  sudo ufw allow from 192.168.50.0/24 to any port ${receiverPort}\n  sudo ufw reload\n`);
+    console.log(`\n  sudo ufw allow from 192.168.1.0/24 to any port ${receiverPort}\n  sudo ufw reload\n`);
     warn("Adjust the subnet if your LAN uses a different range.");
   } else {
     ok(`UFW rule found for port ${receiverPort}`);

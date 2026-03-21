@@ -1,26 +1,18 @@
 {
-  "agentId": "liz",
+  "agentId": "agent-a",
   "receiverPort": 18803,
-  "receiverToken": "your-receiver-token-here",
+  "receiverToken": "replace-with-your-token",
+  "watchPath": "~/.openclaw/agents/main/sessions/",
   "peers": [
     {
-      "name": "ray",
-      "url": "http://192.168.50.22:18801",
-      "token": "ray-receiver-token"
+      "agentId": "agent-b",
+      "url": "http://192.168.1.101:18803",
+      "token": "replace-with-peer-token"
     },
     {
-      "name": "woodhouse",
-      "url": "http://192.168.50.24:18801",
-      "token": "woodhouse-receiver-token"
+      "agentId": "agent-c",
+      "url": "http://192.168.1.102:18803",
+      "token": "replace-with-peer-token"
     }
-  ],
-  "watchPaths": [
-    "~/.openclaw/agents/main/sessions"
-  ],
-  "bridgeInterval": 60,
-  "relayRateLimit": 1000,
-  "filter": {
-    "minContentLength": 20,
-    "skipRoles": ["tool", "system"]
-  }
+  ]
 }

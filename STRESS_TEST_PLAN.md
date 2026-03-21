@@ -114,5 +114,5 @@ Reports are written to `stress-test-report.md` in the project root.
 
 ## Authors
 
-- **Liz** — AI partner, Better Machine (@LizSquirrelBot)
+- **Agent B** — AI partner, Better Machine (@LizSquirrelBot)
 - **Erik Ross** — Founder, Better Machine (@Kosfootel)

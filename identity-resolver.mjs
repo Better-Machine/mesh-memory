@@ -8,8 +8,8 @@
  *   Telegram, WhatsApp, Discord, Signal, Slack, iMessage, Matrix, IRC, etc.
  *
  * Identity keys:
- *   telegram:8362390464         → individual user
- *   group:telegram:-5140439253  → Telegram group chat
+ *   telegram:1234567890         → individual user
+ *   group:telegram:-1001234567890  → Telegram group chat
  *   group:discord:222222222     → Discord channel
  *   group:whatsapp:+1555@g.us   → WhatsApp group
  *   group:signal:<uuid>         → Signal group
@@ -24,8 +24,8 @@
  * Usage:
  *   import { resolveIdentity, resolveContext, resolveConversation } from './identity-resolver.mjs';
  *
- *   const who  = resolveIdentity('telegram', '8362390464');
- *   const where = resolveContext('telegram', '-5140439253');
+ *   const who  = resolveIdentity('telegram', '1234567890');
+ *   const where = resolveContext('telegram', '-1001234567890');
  *   const full  = resolveConversation(message);
  *   // → { identity, context, identityTag, contextTag, fullTag }
  */
@@ -188,7 +188,7 @@ export function resolveConversation(message) {
 /**
  * Register a contact (person, agent, group, or channel).
  *
- * @param {string} key - e.g. 'telegram:8362390464' or 'group:telegram:-5140439253'
+ * @param {string} key - e.g. 'telegram:1234567890' or 'group:telegram:-1001234567890'
  * @param {object} data
  */
 export function registerContact(key, data) {

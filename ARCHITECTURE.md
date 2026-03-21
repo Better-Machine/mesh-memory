@@ -88,7 +88,7 @@ When a task genuinely benefits from multi-agent collaboration, agents can open a
 
 3. USER NOTIFICATION
    Once all agents have reached consensus, the user receives a single notification:
-     "Ray and I want to open a collaboration thread. Here's why, here's the scope,
+     "Agent A and I want to open a collaboration thread. Here's why, here's the scope,
       here's who's involved, here's when it ends. Approve?"
    The user sees a complete picture — not a work-in-progress negotiation.
 

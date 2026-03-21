@@ -1,7 +1,7 @@
 # mesh-memory Deployment Guide
 
 **Audience:** Humans and agents alike. Every step is explicit. Every assumption is named.  
-**Authors:** Liz (AI partner, Better Machine) · Erik Ross (Founder, Better Machine)
+**Authors:** Agent B (AI partner, Better Machine) · Erik Ross (Founder, Better Machine)
 
 ---
 
@@ -100,13 +100,13 @@ Expected: `v18.0.0` or higher. mesh-memory uses ES modules (`import`/`export`) a
 ### 4. Verify network reachability between agents
 From each machine, ping every peer's port 18801:
 ```bash
-# From Liz (.23), test Ray (.22):
-nc -zv 192.168.50.22 18801
+# From Agent B (.23), test Agent A (.22):
+nc -zv 192.168.1.101 18801
 # Expected before install: "Connection refused" (port not open yet — this is correct)
 # Expected after install: "Connection succeeded"
 
-# From Liz (.23), test Woodhouse (.24):
-nc -zv 192.168.50.24 18801
+# From Agent B (.23), test Agent C (.24):
+nc -zv 192.168.1.103 18801
 ```
 
 > **Note for agents:** "Connection refused" before install is expected and correct. The receiver process that opens port 18801 doesn't exist yet. Do not interpret this as a firewall problem during pre-install checks.
@@ -177,9 +177,9 @@ Edit `mesh-memory.config.local.json`:
 Leave `peers` empty for now. You will add peers in the coordination step.
 
 Set `agentId` to a short, lowercase identifier:
-- Liz's machine: `"liz"`
-- Ray's machine: `"ray"`
-- Woodhouse's machine: `"woodhouse"`
+- Agent B's machine: `"agent-b"`
+- Agent A's machine: `"agent-a"`
+- Agent C's machine: `"agent-c"`
 
 ### Step 5: Confirm session JSONL path exists
 ```bash
@@ -193,10 +193,10 @@ The watcher will activate when session files appear.
 
 ### Step 6: Open the firewall for port 18801
 ```bash
-sudo ufw allow from 192.168.50.0/24 to any port 18801
+sudo ufw allow from 192.168.1.0/24 to any port 18801
 sudo ufw reload
 ```
-Replace `192.168.50.0/24` with your actual LAN subnet if different.
+Replace `192.168.1.0/24` with your actual LAN subnet if different.
 
 **Do not expose port 18801 to the internet.** This service is LAN-only.
 
@@ -264,9 +264,9 @@ Check the coordination repo's status directory:
 ```bash
 ls ~/.openclaw/mesh-memory-coordination/status/
 # Expected: one .json file per agent
-# e.g.: liz.json  ray.json  woodhouse.json
+# e.g.: agent-b.json  agent-a.json  agent-c.json
 
-cat ~/.openclaw/mesh-memory-coordination/status/ray.json
+cat ~/.openclaw/mesh-memory-coordination/status/agent-a.json
 # Expected: {"phase": "setup-complete", ...}
 ```
 
@@ -287,7 +287,7 @@ npm run receiver
 Expected output:
 ```
 [receiver] Listening on port 18801
-[receiver] Agent: liz
+[receiver] Agent: agent-b
 [receiver] Ready for inbound events
 ```
 
@@ -295,8 +295,8 @@ Expected output:
 
 From each peer machine, confirm the receiver is reachable:
 ```bash
-curl -s http://192.168.50.23:18801/health
-# Expected: {"status":"ok","agentId":"liz","uptime":...}
+curl -s http://192.168.1.102:18801/health
+# Expected: {"status":"ok","agentId":"agent-b","uptime":...}
 ```
 
 Only proceed when all peers return healthy.
@@ -309,8 +309,8 @@ npm run watcher
 ```
 Expected output:
 ```
-[watcher] Agent: liz
-[watcher] Watching: /home/erik-ross/.openclaw/agents/main/sessions
+[watcher] Agent: agent-b
+[watcher] Watching: /home/your-user/.openclaw/agents/main/sessions
 [watcher] Daemon started. Waiting for session writes...
 ```
 
@@ -320,8 +320,8 @@ npm run bridge
 ```
 Expected output:
 ```
-[bridge] Agent: liz
-[bridge] LCM database: /home/erik-ross/.openclaw/lcm.db
+[bridge] Agent: agent-b
+[bridge] LCM database: /home/your-user/.openclaw/lcm.db
 [bridge] Polling every 60 seconds
 [bridge] Last cursor: none (first run)
 ```
@@ -341,26 +341,26 @@ This runs watcher + receiver + bridge via `concurrently`.
 
 ### Test 1: Health check all receivers
 ```bash
-for ip in 192.168.50.22 192.168.50.23 192.168.50.24; do
+for ip in 192.168.1.101 192.168.1.102 192.168.1.103; do
   echo -n "$ip: "
   curl -sf http://$ip:18801/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'], d['agentId'])" 2>/dev/null || echo "UNREACHABLE"
 done
 ```
 Expected:
 ```
-192.168.50.22: ok ray
-192.168.50.23: ok liz
-192.168.50.24: ok woodhouse
+192.168.1.101: ok agent-a
+192.168.1.102: ok agent-b
+192.168.1.103: ok agent-c
 ```
 
 ### Test 2: Send a test event
 ```bash
-# From Liz, send a test event directly to Ray's receiver:
-curl -s -X POST http://192.168.50.22:18801/events \
+# From Agent B, send a test event directly to Agent A's receiver:
+curl -s -X POST http://192.168.1.101:18801/events \
   -H "Authorization: Bearer RAY_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "agentId": "liz",
+    "agentId": "agent-b",
     "sessionKey": "test-session",
     "role": "assistant",
     "content": "mesh-memory integration test — if you can read this, the mesh is working",
@@ -371,7 +371,7 @@ Expected response: `{"status":"ok"}`
 
 ### Test 3: Verify it landed on the peer
 ```bash
-# On Ray's machine:
+# On Agent A's machine:
 cat ~/.openclaw/workspace/memory/mesh/$(date +%Y-%m-%d).md
 ```
 Expected: the test message content appears.
@@ -390,11 +390,11 @@ watch -n 5 "tail -5 ~/.openclaw/workspace/memory/mesh/$(date +%Y-%m-%d).md 2>/de
 ### "Connection refused" on port 18801
 The receiver is not running on that peer. Check if the process is alive:
 ```bash
-ssh erik-ross@192.168.50.22 "ps aux | grep memory-receiver"
+ssh your-user@192.168.1.101 "ps aux | grep memory-receiver"
 ```
 If not running, start it. If the process is running but port is closed, check UFW:
 ```bash
-ssh erik-ross@192.168.50.22 "sudo ufw status | grep 18801"
+ssh your-user@192.168.1.101 "sudo ufw status | grep 18801"
 ```
 
 ### "Unauthorized" from receiver
@@ -426,8 +426,8 @@ sqlite3 ~/.openclaw/lcm.db ".schema"
 ### Agents have inconsistent mesh state (some see messages others don't)
 This is the A2A state consistency problem. Mesh-memory is eventually consistent, not strongly consistent. Each agent's view of the mesh lags by up to 60 seconds. **This is by design.** If you need to verify what a peer currently knows:
 ```bash
-# Check Ray's mesh memory for today:
-ssh erik-ross@192.168.50.22 "cat ~/.openclaw/workspace/memory/mesh/$(date +%Y-%m-%d).md | tail -20"
+# Check Agent A's mesh memory for today:
+ssh your-user@192.168.1.101 "cat ~/.openclaw/workspace/memory/mesh/$(date +%Y-%m-%d).md | tail -20"
 ```
 
 To force a fresh relay of recent context from any agent, trigger a compact:
@@ -448,7 +448,7 @@ crontab -e
 
 Add this line (runs at 2:00 AM local time):
 ```
-0 2 * * * cd /home/erik-ross/.openclaw/workspace/projects/mesh-memory && node dream-cycle.mjs >> ~/.openclaw/logs/dream-cycle.log 2>&1
+0 2 * * * cd /home/your-user/.openclaw/workspace/projects/mesh-memory && node dream-cycle.mjs >> ~/.openclaw/logs/dream-cycle.log 2>&1
 ```
 
 The dream cycle writes suggestions to:
@@ -494,8 +494,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=erik-ross
-WorkingDirectory=/home/erik-ross/.openclaw/workspace/projects/mesh-memory
+User=your-user
+WorkingDirectory=/home/your-user/.openclaw/workspace/projects/mesh-memory
 ExecStart=/usr/bin/npm start
 Restart=on-failure
 RestartSec=10
@@ -566,11 +566,11 @@ After updating, re-run the health check and Test 2 (test event) to confirm the u
 
 | Agent | Machine | IP | Receiver URL | A2A URL |
 |---|---|---|---|---|
-| Liz | secondary | 192.168.50.23 | http://192.168.50.23:18801 | http://192.168.50.23:18800 |
-| Ray | primary | 192.168.50.22 | http://192.168.50.22:18801 | http://192.168.50.22:18800 |
-| Woodhouse | mac | 192.168.50.24 | http://192.168.50.24:18801 | http://192.168.50.24:18800 |
+| Agent B | secondary | 192.168.1.102 | http://192.168.1.102:18801 | http://192.168.1.102:18800 |
+| Agent A | primary | 192.168.1.101 | http://192.168.1.101:18801 | http://192.168.1.101:18800 |
+| Agent C | mac | 192.168.1.103 | http://192.168.1.103:18801 | http://192.168.1.103:18800 |
 
-> **Note for agents:** IPs are DHCP-assigned. If a machine's IP changes, update `mesh-memory.config.local.json` peers section and restart. Check current IPs in the agentcy-services repo COORDINATION.md or run `nmap -sn 192.168.50.0/24` to discover current assignments.
+> **Note for agents:** IPs are DHCP-assigned. If a machine's IP changes, update `mesh-memory.config.local.json` peers section and restart. Check current IPs in the your shared coordination notes or run `nmap -sn 192.168.1.0/24` to discover current assignments.
 
 ---
 
@@ -588,7 +588,7 @@ Or it starts automatically with `npm start` alongside the other services.
 
 Expected output:
 ```
-[thread-manager] Agent: liz
+[thread-manager] Agent: agent-b
 [thread-manager] Listening on port 18802
 [thread-manager] Endpoints: /mesh/thread/propose, /mesh/thread/:id/write, /mesh/thread/:id/close
 [thread-manager] Timeout checker running (1h interval)
@@ -597,7 +597,7 @@ Expected output:
 ### Firewall: open port 18802
 
 ```bash
-sudo ufw allow from 192.168.50.0/24 to any port 18802
+sudo ufw allow from 192.168.1.0/24 to any port 18802
 sudo ufw reload
 ```
 
@@ -612,10 +612,10 @@ curl -s -X POST http://localhost:18802/mesh/thread/propose \
   -H "Content-Type: application/json" \
   -d '{
     "threadId": "'$(python3 -c "import uuid; print(uuid.uuid4())")'",
-    "proposingAgent": "liz",
+    "proposingAgent": "agent-b",
     "purpose": "Coordinate clean-sl8 iOS deployment plan",
     "scope": "Deployment steps, timing, rollback plan",
-    "participants": ["liz", "ray"],
+    "participants": ["agent-b", "agent-a"],
     "closingCondition": "task complete",
     "timeoutHours": 4,
     "proposedAt": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
@@ -647,7 +647,7 @@ curl -s -X POST http://localhost:18802/mesh/thread/<threadId>/write \
   -H "Authorization: Bearer YOUR_RECEIVER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "agentId": "liz",
+    "agentId": "agent-b",
     "token": "EPHEMERAL_TOKEN_FROM_TOKENS_JSON",
     "role": "update",
     "content": "Deployment window confirmed: 2-4pm PST",
@@ -692,4 +692,4 @@ For agents: if you discover a deployment failure mode not covered here, document
 
 ---
 
-*Built by Liz and Erik Ross · Better Machine · 2026*
+*Built by Agent B and Erik Ross · Better Machine · 2026*
