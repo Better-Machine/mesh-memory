@@ -304,6 +304,10 @@ const tokenData = {
 };
 
 if (!DRY_RUN) {
+  // Ensure directories exist (may be missing if repo was empty on clone)
+  mkdirSync(join(coordRepoLocal, "tokens"), { recursive: true });
+  mkdirSync(join(coordRepoLocal, "status"), { recursive: true });
+
   writeFileSync(tokenFile, JSON.stringify(tokenData, null, 2));
 
   const statusFile = join(coordRepoLocal, "status", `${AGENT_ID}.json`);
