@@ -1,0 +1,27 @@
+{
+  "_comment": "Identity registry for mesh-memory. Maps channel+userId to rich identity context.",
+  "_version": "1.0.0",
+  "contacts": {
+    "telegram:8362390464": {
+      "name": "Erik Ross",
+      "username": "erikdross",
+      "role": "founder",
+      "relationship": "owner",
+      "projects": ["better-machine", "door$", "localzon", "hockeyops.ai", "clean-sl8"],
+      "notes": "Founder of Better Machine. Primary human collaborator.",
+      "channel": "telegram"
+    },
+    "telegram:6167756653": {
+      "name": "Christian",
+      "username": "uwibami",
+      "role": "co-founder",
+      "relationship": "collaborator",
+      "projects": ["clean-sl8"],
+      "notes": "Co-founder of clean-sl8. Digital marketing and real estate background. Origin story: sold $1M home, vengeful seller remotely manipulated smart home devices post-closing.",
+      "channel": "telegram"
+    }
+  },
+  "unknownBehavior": "flag",
+  "_unknownBehavior_options": "flag | ignore | block",
+  "_flagged": []
+}

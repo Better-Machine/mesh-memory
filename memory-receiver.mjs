@@ -39,7 +39,19 @@ function validateEvent(body) {
 function formatEntry(event) {
   const date = new Date(event.timestamp);
   const time = date.toTimeString().slice(0, 8);
-  return `## [${time}] ${event.agentId} (${event.role})\n${event.content}\n\n`;
+
+  // Identity tag — show who said it if we know
+  const identityTag = event.identityTag
+    ? ` ${event.identityTag}`
+    : event.identity
+      ? ` [${event.identity.name || "unknown"} / ${event.identity.role || "?"}]`
+      : "";
+
+  const tagLine = event.tags?.length
+    ? `\n> tags: ${event.tags.map(t => `[${t}]`).join(" ")}`
+    : "";
+
+  return `## [${time}] ${event.agentId} (${event.role})${identityTag}${tagLine}\n${event.content}\n\n`;
 }
 
 /**

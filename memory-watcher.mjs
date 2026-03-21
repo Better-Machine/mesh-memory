@@ -12,6 +12,7 @@ import { relayEvent } from "./memory-relay.mjs";
 import { loadConfig } from "./config.mjs";
 import { evaluatePrivacy, privacySensitivityHints } from "./privacy.mjs";
 import { detectTags, taggingSuggestion } from "./lesson-tagger.mjs";
+import { resolveIdentity, formatIdentityTag } from "./identity-resolver.mjs";
 
 /**
  * @typedef {Object} MemoryEvent
@@ -69,12 +70,26 @@ function parseMessage(line, sessionKey, config) {
 
     if (!content || content.length < config.filter.minContentLength) return null;
 
+    // ── Identity resolution ─────────────────────────────────────────────
+    // Try to resolve sender from message metadata (inbound context)
+    const channel = msg.metadata?.channel || msg.channel || null;
+    const senderId = msg.metadata?.sender_id || msg.sender_id || null;
+    let identity = null;
+    let identityTag = "";
+
+    if (channel && senderId && role === "user") {
+      identity = resolveIdentity(channel, String(senderId));
+      identityTag = formatIdentityTag(identity);
+    }
+
     return {
       agentId: config.agentId,
       sessionKey,
       role,
       content,
       timestamp: msg.timestamp || new Date().toISOString(),
+      ...(identity ? { identity } : {}),
+      ...(identityTag ? { identityTag } : {}),
     };
   } catch {
     return null;
@@ -138,7 +153,7 @@ async function handleFileChange(filePath, config) {
         }
 
         console.log(
-          `[watcher] ${event.role} message from session ${sessionKey} (${event.content.length} chars)${event.tags ? ` [${event.tags.join(", ")}]` : ""}`
+          `[watcher] ${event.role} message from session ${sessionKey} (${event.content.length} chars)${event.identityTag ? ` ${event.identityTag}` : ""}${event.tags ? ` [${event.tags.join(", ")}]` : ""}`
         );
         await relayEvent(event, config);
       }
