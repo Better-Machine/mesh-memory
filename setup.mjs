@@ -31,6 +31,8 @@ import { resolve, join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import crypto from "node:crypto";
+import https from "node:https";
+import http from "node:http";
 
 const exec = promisify(execCb);
 
@@ -133,7 +135,7 @@ ${DRY_RUN ? c.yellow + "[DRY-RUN MODE — no changes will be made]" + c.reset + 
 `);
 
 // ─── 2. PREREQUISITES ────────────────────────────────────────────────────────
-head("Step 1 of 6 — Checking prerequisites");
+head("Step 1 of 7 — Checking prerequisites");
 
 if (!SKIP_CHECKS) {
   // Node version
@@ -206,7 +208,7 @@ if (!SKIP_CHECKS) {
 }
 
 // ─── 3. AGENT IDENTITY ───────────────────────────────────────────────────────
-head("Step 2 of 6 — Identify this agent");
+head("Step 2 of 7 — Identify this agent");
 
 if (!AGENT_ID) {
   const defaultId = hostname().split(".")[0].toLowerCase().replace(/[^a-z0-9-]/g, "-");
@@ -231,8 +233,191 @@ if (lanIP) {
   }
 }
 
+// ─── IDENTITY HELPERS ────────────────────────────────────────────────────────
+
+const CONTACTS_PATH = join(PROJ_ROOT, "mesh-memory.contacts.json");
+
+function loadContacts() {
+  if (existsSync(CONTACTS_PATH)) {
+    try { return JSON.parse(readFileSync(CONTACTS_PATH, "utf8")); } catch { /* fall through */ }
+  }
+  return { _comment: "Identity registry for mesh-memory.", _version: "1.0.0", contacts: {}, unknownBehavior: "flag", _flagged: [] };
+}
+
+function saveContacts(reg) {
+  if (!DRY_RUN) writeFileSync(CONTACTS_PATH, JSON.stringify(reg, null, 2), "utf8");
+}
+
+function readOpenClawConfig() {
+  const cfgPath = join(HOME, ".openclaw", "openclaw.json");
+  if (!existsSync(cfgPath)) return null;
+  try { return JSON.parse(readFileSync(cfgPath, "utf8")); } catch { return null; }
+}
+
+async function fetchAgentCard(url) {
+  return new Promise((resolve) => {
+    const lib = url.startsWith("https") ? https : http;
+    lib.get(`${url}/.well-known/agent-card.json`, { timeout: 3000 }, (res) => {
+      let data = "";
+      res.on("data", (chunk) => data += chunk);
+      res.on("end", () => {
+        try { resolve(JSON.parse(data)); } catch { resolve(null); }
+      });
+    }).on("error", () => resolve(null)).on("timeout", () => resolve(null));
+  });
+}
+
+async function promptIdentity(key, channel, userId, defaultName = "") {
+  console.log(`\n${c.yellow}  Unknown identity: ${key}${c.reset}`);
+  const name = (await prompt(`  Name [${defaultName || "?"}]:`)).trim() || defaultName || "Unknown";
+  const role = (await prompt(`  Role (e.g. founder, co-founder, agent, collaborator):`)).trim() || "unknown";
+  const projectsRaw = (await prompt(`  Projects (comma-separated, e.g. clean-sl8, door$):`)).trim();
+  const projects = projectsRaw ? projectsRaw.split(",").map(p => p.trim()).filter(Boolean) : [];
+  const notes = (await prompt(`  Notes (optional, press enter to skip):`)).trim();
+  return { name, role, relationship: "collaborator", projects, notes, channel, _registeredAt: new Date().toISOString() };
+}
+
+// ─── 3. IDENTITY ONBOARDING ──────────────────────────────────────────────────
+head("Step 3 of 7 — Identity onboarding");
+
+info("mesh-memory needs to know who participates in this mesh.");
+info("This ensures memory entries carry rich context (name, role, projects)");
+info("instead of raw sender IDs.");
+info("");
+
+const reg = loadContacts();
+let contactsChanged = false;
+
+// ── 3a. Self-identity ────────────────────────────────────────────────────────
+const selfKey = `agent:${AGENT_ID}`;
+if (!reg.contacts[selfKey]) {
+  info(`Registering this agent: ${AGENT_ID}`);
+  const agentName = (await prompt(`  Display name for this agent [${AGENT_ID}]:`)).trim() || AGENT_ID;
+  const agentProjects = (await prompt(`  Projects this agent works on (comma-separated):`)).trim();
+  reg.contacts[selfKey] = {
+    name: agentName,
+    role: "agent",
+    relationship: "self",
+    projects: agentProjects ? agentProjects.split(",").map(p => p.trim()).filter(Boolean) : [],
+    machine: lanIP || hostname(),
+    channel: "agent",
+    _registeredAt: new Date().toISOString(),
+  };
+  contactsChanged = true;
+  ok(`Registered self: ${agentName}`);
+} else {
+  ok(`Self identity already registered: ${reg.contacts[selfKey].name}`);
+}
+
+// ── 3b. Auto-discover humans from OpenClaw groupAllowFrom ───────────────────
+const openClawCfg = readOpenClawConfig();
+const allowFrom = openClawCfg?.channels?.telegram?.groupAllowFrom || [];
+
+if (allowFrom.length > 0) {
+  info(`Found ${allowFrom.length} Telegram user(s) in OpenClaw allowlist.`);
+  for (const userId of allowFrom) {
+    const key = `telegram:${userId}`;
+    if (reg.contacts[key]) {
+      ok(`  Already known: ${reg.contacts[key].name} (${key})`);
+      continue;
+    }
+    warn(`  Unknown Telegram user: ${userId}`);
+    const identity = await promptIdentity(key, "telegram", userId);
+    reg.contacts[key] = identity;
+    contactsChanged = true;
+    ok(`  Registered: ${identity.name}`);
+  }
+} else {
+  info("No Telegram allowlist found in openclaw.json — skipping human auto-discovery.");
+}
+
+// ── 3c. Auto-discover agents from A2A peer cards ─────────────────────────────
+info("\nAttempting to auto-discover peer agents via A2A...");
+// Common LAN IPs to probe — covers typical small mesh setups
+const subnet = lanIP ? lanIP.split(".").slice(0, 3).join(".") : "192.168.50";
+const probeCandidates = [
+  `http://${subnet}.22:18800`,
+  `http://${subnet}.23:18800`,
+  `http://${subnet}.24:18800`,
+  `http://${subnet}.25:18800`,
+];
+
+for (const url of probeCandidates) {
+  const ip = url.match(/\d+\.\d+\.\d+\.\d+/)?.[0];
+  if (ip && lanIP && ip === lanIP) continue; // skip self
+
+  process.stdout.write(`  ${c.dim}Probing ${url}...${c.reset} `);
+  const card = await fetchAgentCard(url);
+
+  if (!card || !card.name) {
+    console.log(`${c.dim}no response${c.reset}`);
+    continue;
+  }
+
+  const agentName = card.name;
+  const guessedId = agentName.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const agentKey = `agent:${guessedId}`;
+  console.log(`${c.green}found: ${agentName}${c.reset}`);
+
+  if (reg.contacts[agentKey]) {
+    ok(`  Already known: ${reg.contacts[agentKey].name}`);
+    continue;
+  }
+
+  info(`  New agent found at ${url}: "${agentName}"`);
+  const confirmedName = (await prompt(`  Name [${agentName}]:`)).trim() || agentName;
+  const confirmedId = (await prompt(`  Agent ID [${guessedId}]:`)).trim() || guessedId;
+  const agentRole = (await prompt(`  Role [agent]:`)).trim() || "agent";
+  const agentProjects = (await prompt(`  Projects (comma-separated):`)).trim();
+  const agentNotes = (await prompt(`  Notes (optional):`)).trim();
+
+  reg.contacts[`agent:${confirmedId}`] = {
+    name: confirmedName,
+    role: agentRole,
+    relationship: "peer",
+    projects: agentProjects ? agentProjects.split(",").map(p => p.trim()).filter(Boolean) : [],
+    machine: ip,
+    a2a: url,
+    notes: agentNotes || undefined,
+    channel: "agent",
+    _registeredAt: new Date().toISOString(),
+  };
+  contactsChanged = true;
+  ok(`  Registered agent: ${confirmedName}`);
+}
+
+// ── 3d. Manual additions ─────────────────────────────────────────────────────
+const addMore = (await prompt("\nAdd any additional identities manually? (y/N):")).trim().toLowerCase();
+if (addMore === "y") {
+  let adding = true;
+  while (adding) {
+    const channel = (await prompt("  Channel (telegram/agent/discord/other):")).trim() || "telegram";
+    const userId = (await prompt("  User ID or handle:")).trim();
+    if (!userId) { adding = false; break; }
+    const key = `${channel}:${userId}`;
+    if (reg.contacts[key]) {
+      warn(`  Already registered: ${reg.contacts[key].name}`);
+    } else {
+      const identity = await promptIdentity(key, channel, userId);
+      reg.contacts[key] = identity;
+      contactsChanged = true;
+      ok(`  Registered: ${identity.name}`);
+    }
+    const cont = (await prompt("  Add another? (y/N):")).trim().toLowerCase();
+    adding = cont === "y";
+  }
+}
+
+if (contactsChanged) {
+  saveContacts(reg);
+  ok(`Identity registry written: ${CONTACTS_PATH}`);
+  info(`${Object.keys(reg.contacts).length} identities registered.`);
+} else {
+  ok("Identity registry already complete — no changes needed.");
+}
+
 // ─── 4. COORDINATION REPO ───────────────────────────────────────────────────
-head("Step 3 of 6 — Coordination repo");
+head("Step 4 of 7 — Coordination repo");
 
 info(`mesh-memory uses a dedicated GitHub repo for token exchange between agents.`);
 info(`Repo name: ${COORD_REPO} (private)`);
@@ -287,7 +472,7 @@ if (coordRepoExists) {
 }
 
 // ─── 5. PUBLISH THIS AGENT'S TOKEN ──────────────────────────────────────────
-head("Step 4 of 6 — Publish receiver token");
+head("Step 5 of 7 — Publish receiver token");
 
 const receiverToken = generateToken();
 info(`Generated receiver token for ${AGENT_ID}`);
@@ -330,7 +515,7 @@ warn("IMPORTANT: Grant repository access to peer GitHub accounts if they haven't
 warn(`Run: gh repo edit ${coordRepoFull} --add-collaborator <peer-github-username>`);
 
 // ─── 6. WAIT FOR PEER TOKENS ────────────────────────────────────────────────
-head("Step 5 of 6 — Wait for peers");
+head("Step 6 of 7 — Wait for peers");
 
 if (PEER_COUNT === null) {
   const peerInput = await prompt("How many peer agents are joining this mesh? (e.g. 2):");
@@ -411,7 +596,7 @@ if (PEER_COUNT === 0) {
 }
 
 // ─── 7. WRITE CONFIG ─────────────────────────────────────────────────────────
-head("Step 6 of 6 — Write configuration");
+head("Step 7 of 7 — Write configuration");
 
 const example = existsSync(EXAMPLE_CFG)
   ? JSON.parse(readFileSync(EXAMPLE_CFG, "utf8"))
