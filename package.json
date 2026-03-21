@@ -4,6 +4,7 @@
   "description": "Per-message cross-agent memory mesh for OpenClaw",
   "type": "module",
   "scripts": {
+    "setup": "node setup.mjs",
     "watcher": "node memory-watcher.mjs",
     "receiver": "node memory-receiver.mjs",
     "bridge": "node memory-bridge.mjs",

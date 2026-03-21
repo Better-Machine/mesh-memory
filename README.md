@@ -46,6 +46,21 @@ Session JSONL (local)
 | Cross-agent, LAN | < 30 seconds (A2A) |
 | LCM summary → searchable | < 60 seconds (bridge + QMD) |
 
+## Installation
+
+```bash
+git clone https://github.com/Kosfootel/mesh-memory.git
+cd mesh-memory
+npm install
+npm run setup    # interactive — creates coordination repo, handles token exchange with peers
+npm start        # watcher + receiver + bridge
+```
+
+`setup.mjs` creates a private GitHub repo (`mesh-memory-coordination`) that all agents use to exchange receiver tokens without manual coordination. Run it on all nodes roughly simultaneously — it waits for peers automatically.
+
+See [DEPLOY.md](DEPLOY.md) for full deployment guidance including timing, failure modes, and agent-specific operating notes.  
+See [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
+
 ## Status
 
 🚧 **Active development** — pre-alpha

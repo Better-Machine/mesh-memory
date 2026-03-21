@@ -145,62 +145,75 @@ Replace `192.168.50.0/24` with your actual LAN subnet if different.
 
 ---
 
-## Coordination Step: Exchange Tokens Between Agents
+## Coordination Step: Run setup.mjs
 
-This step requires all nodes to be at the same point in the install process. **Do not start any services until token exchange is complete on all nodes.**
+**This step replaces all manual token exchange.** `setup.mjs` handles it automatically by creating a dedicated private GitHub repo (`mesh-memory-coordination`) that all agents use as their single source of truth.
 
-### How to exchange tokens
+### What setup.mjs does
 
-Each agent shares their `receiverToken` with all peers. In the Better Machine mesh:
+1. Checks all prerequisites (Node, OpenClaw gateway, A2A, gh CLI)
+2. Creates `mesh-memory-coordination` on GitHub if it doesn't exist — or joins the existing one
+3. Generates this agent's receiver token
+4. Publishes the token and receiver URL to the coordination repo
+5. Polls until all peer tokens appear (with configurable timeout)
+6. Writes `mesh-memory.config.local.json` automatically
+7. Updates install status so peers know this agent is ready
 
-1. Liz posts her token to the agentcy-services repo handoffs directory
-2. Ray posts his token
-3. Woodhouse posts his token
-4. Each agent reads the others' tokens and updates their config
+### Running setup.mjs
 
-#### Liz — post your token:
 ```bash
-cat >> /home/erik-ross/.openclaw/workspace/projects/agentcy-services/handoffs/mesh-memory-tokens.md << EOF
-
-## Liz token ($(date +%Y-%m-%d))
-Receiver URL: http://192.168.50.23:18801
-Token: YOUR_LIZ_TOKEN_HERE
-EOF
-git -C /home/erik-ross/.openclaw/workspace/projects/agentcy-services add -A
-git -C /home/erik-ross/.openclaw/workspace/projects/agentcy-services commit -m "mesh-memory: liz receiver token"
-git -C /home/erik-ross/.openclaw/workspace/projects/agentcy-services push
+node setup.mjs
 ```
 
-#### Wait for all peers to post their tokens
+The script is interactive and will guide you through each step. It prompts for:
+- Agent ID (auto-suggested from hostname)
+- Number of peers joining the mesh
+- LAN IP (auto-detected, confirms before use)
+
+### Timing: when to run setup.mjs on each node
+
+Run setup.mjs on all nodes roughly simultaneously — or within a few minutes of each other. The script waits up to 5 minutes (configurable) for peer tokens to appear before timing out.
+
+**Correct sequence:**
+```
+Node A: node setup.mjs     ← starts waiting for peers
+Node B: node setup.mjs     ← starts waiting for peers  (within ~5 min of A)
+Node C: node setup.mjs     ← starts waiting for peers  (within ~5 min of A)
+
+All three publish tokens → all three detect each other → all three write config → done
+```
+
+**If a node times out waiting for peers:**
 ```bash
-# Pull and check
-git -C /home/erik-ross/.openclaw/workspace/projects/agentcy-services pull
-cat /home/erik-ross/.openclaw/workspace/projects/agentcy-services/handoffs/mesh-memory-tokens.md
+# Re-run setup — it will find the coordination repo already exists and
+# join it, picking up any tokens that were published after the timeout
+node setup.mjs --agent-id <your-id> --timeout 600
 ```
 
-Do not proceed until you see tokens from all peers in this file.
+> **Timing conflict note for agents:** Seeing only your own token in the coordination repo is expected if peers haven't started setup.mjs yet. The script retries every 5 seconds. Do not interpret this as an error — just wait. If the timeout expires, re-run setup.mjs after confirming peers are ready.
 
-> **Timing conflict note for agents:** If you pull this file and see only your own token, it means peers have not yet completed their install. Wait and retry in 2-3 minutes. Do not start services. Do not assume peers are broken — they may simply be mid-install.
+### Granting repo access to peer agents
 
-### Update your config with peer tokens
-
-Once all tokens are available, update `mesh-memory.config.local.json` peers section:
-```json
-"peers": [
-  {
-    "name": "ray",
-    "url": "http://192.168.50.22:18801",
-    "token": "RAY_TOKEN_FROM_HANDOFF_FILE"
-  },
-  {
-    "name": "woodhouse",
-    "url": "http://192.168.50.24:18801",
-    "token": "WOODHOUSE_TOKEN_FROM_HANDOFF_FILE"
-  }
-]
+If peer agents are on different GitHub accounts, grant them access to the coordination repo:
+```bash
+gh repo edit <your-github-username>/mesh-memory-coordination --add-collaborator <peer-github-username>
 ```
 
-Adjust URLs to match the actual IP of each peer. Use the IPs in the tokens file, not assumed IPs.
+For the Better Machine mesh (all repos under Kosfootel), no additional access is needed.
+
+### Verifying setup completed on all nodes
+
+Check the coordination repo's status directory:
+```bash
+ls ~/.openclaw/mesh-memory-coordination/status/
+# Expected: one .json file per agent
+# e.g.: liz.json  ray.json  woodhouse.json
+
+cat ~/.openclaw/mesh-memory-coordination/status/ray.json
+# Expected: {"phase": "setup-complete", ...}
+```
+
+If any agent shows `"phase": "token-published"` instead of `"setup-complete"`, that agent's setup.mjs timed out or was interrupted. Have them re-run it.
 
 ---
 
