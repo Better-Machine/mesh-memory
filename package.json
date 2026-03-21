@@ -21,7 +21,7 @@
   },
   "authors": [
     { "name": "Liz", "role": "AI partner, Better Machine", "github": "LizSquirrelBot" },
-    { "name": "Erik Ross", "role": "Founder, Better Machine", "github": "Kosfootel" }
+    { "name": "Erik Ross", "role": "Founder, Better Machine", "github": "Better-Machine" }
   ],
   "license": "MIT"
 }

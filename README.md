@@ -32,7 +32,7 @@ No peers required. No coordination. Works on day one with a single agent.
 ## Setup
 
 ```bash
-git clone https://github.com/Kosfootel/mesh-memory
+git clone https://github.com/Better-Machine/mesh-memory
 cd mesh-memory
 npm install
 cp mesh-memory.config.json mesh-memory.config.local.json

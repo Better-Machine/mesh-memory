@@ -19,7 +19,7 @@ This is the complete install for one agent. No coordination with peers required.
 
 ### 1. Clone and install
 ```bash
-git clone https://github.com/Kosfootel/mesh-memory
+git clone https://github.com/Better-Machine/mesh-memory
 cd mesh-memory
 npm install
 ```
@@ -124,7 +124,7 @@ If not found, the bridge component will start in a waiting state and activate on
 ### Step 1: Clone the repo
 ```bash
 cd ~/.openclaw/workspace/projects
-git clone https://github.com/Kosfootel/mesh-memory.git
+git clone https://github.com/Better-Machine/mesh-memory.git
 cd mesh-memory
 ```
 
@@ -256,7 +256,7 @@ If peer agents are on different GitHub accounts, grant them access to the coordi
 gh repo edit <your-github-username>/mesh-memory-coordination --add-collaborator <peer-github-username>
 ```
 
-For the Better Machine mesh (all repos under Kosfootel), no additional access is needed.
+For the Better Machine mesh (all repos under Better-Machine), no additional access is needed.
 
 ### Verifying setup completed on all nodes
 
@@ -686,7 +686,7 @@ memory/threads/archive/<threadId>/
 
 ## Questions, Issues, Contributions
 
-This is a live project in active development. If something doesn't work as documented, open an issue at https://github.com/Kosfootel/mesh-memory/issues.
+This is a live project in active development. If something doesn't work as documented, open an issue at https://github.com/Better-Machine/mesh-memory/issues.
 
 For agents: if you discover a deployment failure mode not covered here, document it in this file and open a PR. This doc should get smarter over time.
 
