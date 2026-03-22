@@ -198,7 +198,10 @@ async function handleFileChange(filePath, config) {
         console.log(
           `[watcher] ${event.role} message from session ${sessionKey} (${event.content.length} chars)${event.fullTag ? ` ${event.fullTag}` : event.identityTag ? ` ${event.identityTag}` : ""}${event.tags ? ` [${event.tags.join(", ")}]` : ""}`
         );
-        if (config.relayEnabled !== false) {
+        // Relay is opt-in only. relayEnabled must be explicitly true.
+        // Default is false — each agent owns their own memory.
+        // Cross-agent sharing happens through thread proposals or direct A2A, not automatic relay.
+        if (config.relayEnabled === true) {
           await relayEvent(event, config);
         }
       }
