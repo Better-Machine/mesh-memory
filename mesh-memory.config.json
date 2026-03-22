@@ -6,6 +6,9 @@
   "watchPath": "~/.openclaw/agents/main/sessions/",
   "relayEnabled": false,
   "relayMaxQueueDepth": 500,
+  "privacy": {
+    "keywords": []
+  },
   "peers": [
     {
       "agentId": "agent-b",
