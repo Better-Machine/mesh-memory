@@ -41,18 +41,19 @@ export function createConsentRouter(config) {
       `[thread-consent] Received proposal ${proposal.threadId} from ${proposal.proposingAgent}: "${proposal.purpose}"`
     );
 
-    // Consent logic: auto-accept all proposals for now (placeholder)
-    // Future: check purpose against known project scopes in config,
-    // queue for manual review if no match
-    const accepted = true;
+    // Consent logic: cross-reference proposingAgent against known peers
+    const knownPeer = config.peers.find(p => p.name === proposal.proposingAgent);
+    const accepted = !!knownPeer;
 
     const entry = proposals.get(proposal.threadId);
     entry.status = accepted ? "accepted" : "pending-review";
     entry.respondedAt = new Date().toISOString();
 
-    console.log(
-      `[thread-consent] Auto-accepted proposal ${proposal.threadId}`
-    );
+    if (accepted) {
+      console.log(`[thread-consent] Accepted proposal ${proposal.threadId} from known peer ${proposal.proposingAgent}`);
+    } else {
+      console.warn(`[thread-consent] Rejected proposal from unknown agent: ${proposal.proposingAgent}`);
+    }
 
     return res.json({
       threadId: proposal.threadId,

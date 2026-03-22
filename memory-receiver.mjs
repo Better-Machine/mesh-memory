@@ -28,6 +28,9 @@ function validateEvent(body) {
     return "Missing or invalid content";
   if (!body.timestamp || typeof body.timestamp !== "string")
     return "Missing or invalid timestamp";
+  // M6: Validate timestamp is parseable ISO 8601
+  const ts = new Date(body.timestamp);
+  if (isNaN(ts.getTime())) return "Invalid timestamp — must be ISO 8601";
   return null;
 }
 
@@ -146,14 +149,23 @@ async function main() {
     }
   });
 
-  /** Health check */
+  /** Health check — L1: omit agentId to avoid info disclosure on public probes */
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok", agent: config.agentId });
+    res.json({ status: "ok" });
   });
 
-  app.listen(port, () => {
+  // M7: Attach error handler for port-in-use and other listen errors
+  const srv = app.listen(port, () => {
     console.log(`[receiver] Agent: ${config.agentId}`);
     console.log(`[receiver] Listening on port ${port}`);
+  });
+  srv.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`[receiver] Port ${port} is already in use. Is another receiver running?`);
+    } else {
+      console.error("[receiver] Server error:", err.message);
+    }
+    process.exit(1);
   });
 }
 

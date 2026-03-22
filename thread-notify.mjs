@@ -4,11 +4,14 @@
  * Sends via openclaw system event and polls for user response.
  */
 
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { openThread } from "./thread-context.mjs";
+
+const execFileAsync = promisify(execFile);
 
 const THREADS_DIR = resolve(homedir(), ".openclaw/workspace/projects/mesh-memory/memory/threads");
 
@@ -32,22 +35,18 @@ export function formatNotification(proposal, acceptedAgents) {
 
 /**
  * Sends notification via openclaw system event.
+ * Uses execFile (no shell) to prevent shell injection via proposal fields.
  * @param {string} text - Notification text
  * @returns {Promise<void>}
  */
-function sendSystemEvent(text) {
-  return new Promise((resolve, reject) => {
-    const escaped = text.replace(/"/g, '\\"');
-    exec(`openclaw system event --text "${escaped}" --mode now`, (err, stdout, stderr) => {
-      if (err) {
-        console.error("[thread-notify] Failed to send system event:", stderr || err.message);
-        reject(err);
-      } else {
-        console.log("[thread-notify] System event sent");
-        resolve();
-      }
-    });
-  });
+async function sendSystemEvent(text) {
+  try {
+    await execFileAsync("openclaw", ["system", "event", "--text", text, "--mode", "now"]);
+    console.log("[thread-notify] System event sent");
+  } catch (err) {
+    console.error("[thread-notify] Failed to send system event:", err.message);
+    throw err;
+  }
 }
 
 /**
@@ -95,7 +94,16 @@ async function notifyDecline(proposal, reason) {
     const peer = config.peers.find((p) => p.name === participantId);
     if (!peer) continue;
 
-    const peerThreadUrl = peer.url.replace(/:18801\b/, ":18802");
+    let peerThreadUrl;
+    if (peer.threadUrl) {
+      peerThreadUrl = peer.threadUrl;
+    } else {
+      const substituted = peer.url.replace(/:18801\b/, ":18802");
+      if (substituted === peer.url) {
+        console.warn(`[thread-notify] Could not substitute port for peer ${participantId} — threadUrl not set and port 18801 not found in url. Using url as-is.`);
+      }
+      peerThreadUrl = substituted;
+    }
 
     try {
       await fetch(`${peerThreadUrl}/mesh/thread/decline`, {

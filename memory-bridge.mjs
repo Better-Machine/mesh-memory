@@ -155,8 +155,8 @@ async function main() {
   const count = await exportCycle();
   console.log(`[bridge] Initial export: ${count} summaries`);
 
-  // Then repeat on interval
-  setInterval(async () => {
+  // L5: Store interval ref so it can be cleared on shutdown
+  const intervalId = setInterval(async () => {
     try {
       await exportCycle();
     } catch (err) {
@@ -166,6 +166,7 @@ async function main() {
 
   process.on("SIGINT", () => {
     console.log("\n[bridge] Shutting down...");
+    clearInterval(intervalId);
     process.exit(0);
   });
 }

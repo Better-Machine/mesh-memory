@@ -98,12 +98,27 @@ async function flushPeer(peerName, peer, rateLimit) {
  */
 export async function relayEvent(event, config) {
   const { peers, relayRateLimit } = config;
+  // M3: Configurable max queue depth to prevent unbounded memory growth
+  const MAX_QUEUE_DEPTH = config.relayMaxQueueDepth || 500;
 
   for (const peer of peers) {
     if (!pendingQueues.has(peer.name)) {
       pendingQueues.set(peer.name, []);
     }
-    pendingQueues.get(peer.name).push(event);
-    flushPeer(peer.name, peer, relayRateLimit);
+
+    const queue = pendingQueues.get(peer.name);
+
+    // M3: Drop oldest event if queue is full
+    if (queue.length >= MAX_QUEUE_DEPTH) {
+      queue.shift();
+      console.warn(`[relay] Queue full for ${peer.name} (limit: ${MAX_QUEUE_DEPTH}) — dropping oldest event`);
+    }
+
+    queue.push(event);
+
+    // M2: Attach .catch() to surface unexpected errors from flushPeer
+    flushPeer(peer.name, peer, relayRateLimit).catch(err =>
+      console.error(`[relay] Unexpected flush error for ${peer.name}:`, err.message)
+    );
   }
 }
