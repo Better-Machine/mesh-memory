@@ -3,6 +3,7 @@
   "receiverPort": 18803,
   "receiverToken": "replace-with-your-token",
   "watchPath": "~/.openclaw/agents/main/sessions/",
+  "relayEnabled": false,
   "peers": [
     {
       "agentId": "agent-b",

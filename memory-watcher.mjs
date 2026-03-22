@@ -198,7 +198,9 @@ async function handleFileChange(filePath, config) {
         console.log(
           `[watcher] ${event.role} message from session ${sessionKey} (${event.content.length} chars)${event.fullTag ? ` ${event.fullTag}` : event.identityTag ? ` ${event.identityTag}` : ""}${event.tags ? ` [${event.tags.join(", ")}]` : ""}`
         );
-        await relayEvent(event, config);
+        if (config.relayEnabled !== false) {
+          await relayEvent(event, config);
+        }
       }
     }
   } catch (err) {

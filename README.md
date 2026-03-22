@@ -74,7 +74,9 @@ Suppressed messages are not relayed or logged externally. A `[redacted]` marker 
 
 ## Multi-agent (optional)
 
-When you have multiple agents, mesh-memory supports consent-gated collaboration threads — ephemeral, scoped, user-approved. Peer relay lets agents share context across machines.
+When you have multiple agents, mesh-memory supports consent-gated collaboration threads — ephemeral, scoped, user-approved.
+
+**Peer relay is opt-in and disabled by default** (`relayEnabled: false`). Each agent owns their own memory. Cross-agent sharing only happens when agents actively choose to share something — via thread proposals or direct A2A messages. Nothing streams automatically between agents.
 
 This is additive. Nothing breaks or degrades without peers. Add them when you need them.
 
