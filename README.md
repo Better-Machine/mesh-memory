@@ -66,9 +66,17 @@ Tagged messages are written to `memory/mesh/lessons/YYYY-MM-DD.md` and indexed a
 |--------|-----|
 | Per-message | Include `private` anywhere in your message |
 | Session block | `[private]` ... `[/private]` |
-| Keyword config | Add terms to `privacy.keywords` in config |
+| Keyword config | Add terms to `privacy.keywords` in your local config |
 
-Suppressed messages are not relayed or logged externally. A `[redacted]` marker is kept locally so the agent knows a gap exists.
+```json
+{
+  "privacy": {
+    "keywords": ["confidential", "salary", "nda"]
+  }
+}
+```
+
+Suppressed messages are not relayed or logged externally. A `[redacted — private message]` marker is kept locally so the agent knows a gap exists.
 
 ---
 
@@ -84,17 +92,20 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design.
 
 ---
 
-## Status
+## Status (v0.1.0)
 
 | Component | Status |
 |-----------|--------|
 | LCM bridge (cross-session memory export) | ✅ Live |
-| Dream cycle (nightly consolidation) | ✅ Live |
+| Dream cycle (nightly consolidation) | ✅ Built — runs via cron, not `npm start` |
 | Privacy filter | ✅ Live |
 | Lesson tagging | ✅ Live |
 | Agent guidelines | ✅ Written |
-| Multi-agent peer relay | 🔲 Available, setup via `setup.mjs` |
-| Collaboration mesh threads | 🔲 Designed, built, not yet deployed |
+| Multi-agent peer relay | 🔲 Built — opt-in (`relayEnabled: true`) |
+| Collaboration mesh threads | 🔲 Built — requires peer setup |
+| Token expiry | ❌ Not implemented |
+| Queue persistence across restarts | ❌ Not implemented |
+| Storage rotation / pruning | ❌ Not implemented |
 
 ---
 
