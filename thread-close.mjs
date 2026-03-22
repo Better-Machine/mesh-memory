@@ -71,7 +71,16 @@ export async function closeThread(threadId, reason) {
     const peer = config.peers.find((p) => p.name === participantId);
     if (!peer) continue;
 
-    const peerThreadUrl = peer.url.replace(/:18801\b/, ":18802");
+    let peerThreadUrl;
+    if (peer.threadUrl) {
+      peerThreadUrl = peer.threadUrl;
+    } else {
+      const substituted = peer.url.replace(/:18801\b/, ":18802");
+      if (substituted === peer.url) {
+        console.warn(`[thread-close] Could not substitute port for peer ${participantId} — threadUrl not set and port 18801 not found in url. Using url as-is.`);
+      }
+      peerThreadUrl = substituted;
+    }
     try {
       await fetch(`${peerThreadUrl}/mesh/thread/${threadId}/closed`, {
         method: "POST",
@@ -143,6 +152,8 @@ export async function checkTimeouts() {
   return closed;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Creates an Express router for close and notification endpoints.
  * @returns {Router}
@@ -153,7 +164,30 @@ export function createCloseRouter() {
   /** POST /mesh/thread/:threadId/close — close a thread from any participant */
   router.post("/mesh/thread/:threadId/close", async (req, res) => {
     const { threadId } = req.params;
-    const { reason } = req.body || {};
+
+    // H1: Validate threadId is a UUID to prevent path traversal
+    if (!UUID_RE.test(threadId)) {
+      return res.status(400).json({ error: "Invalid threadId" });
+    }
+
+    const { reason, agentId: requestingAgent } = req.body || {};
+
+    // M1: Verify the requesting agent is a participant before allowing close
+    let manifest;
+    try {
+      manifest = await getManifest(threadId);
+    } catch {
+      return res.status(404).json({ error: "Thread not found" });
+    }
+
+    if (manifest.closedAt) {
+      return res.status(410).json({ error: "Thread is already closed" });
+    }
+
+    if (!requestingAgent || !manifest.participants.includes(requestingAgent)) {
+      console.warn(`[thread-close] Rejected close attempt by non-participant: ${requestingAgent} on thread ${threadId}`);
+      return res.status(403).json({ error: "Requesting agent is not a participant in this thread" });
+    }
 
     try {
       await closeThread(threadId, reason || "Closed by participant");
@@ -167,6 +201,12 @@ export function createCloseRouter() {
   /** POST /mesh/thread/:threadId/closed — notification that a thread was closed by a peer */
   router.post("/mesh/thread/:threadId/closed", (req, res) => {
     const { threadId } = req.params;
+
+    // H1: Validate threadId is a UUID to prevent path traversal
+    if (!UUID_RE.test(threadId)) {
+      return res.status(400).json({ error: "Invalid threadId" });
+    }
+
     const { closedBy, reason, closedAt } = req.body || {};
 
     console.log(

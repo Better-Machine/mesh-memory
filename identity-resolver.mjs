@@ -30,7 +30,7 @@
  *   // → { identity, context, identityTag, contextTag, fullTag }
  */
 
-import { readFileSync, writeFileSync, watchFile } from 'node:fs';
+import { readFileSync, writeFileSync, watchFile, unwatchFile } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -63,6 +63,13 @@ watchFile(CONTACTS_PATH, { interval: 5000 }, () => {
   loadRegistry();
   console.log('[identity-resolver] Contacts registry reloaded');
 });
+
+/**
+ * L2: Stop watching the contacts file (call during graceful shutdown or in tests).
+ */
+export function unwatchContacts() {
+  unwatchFile(CONTACTS_PATH);
+}
 
 // ─── Session key parsing ─────────────────────────────────────────────────────
 
@@ -225,12 +232,19 @@ function flagUnknown(key, channel, id, type, reg) {
   console.log(`[identity-resolver] Flagged unknown ${type}: ${key}`);
 }
 
+// L3: Debounce registry saves — avoid blocking the event loop on every unknown identity
+let _savePending = false;
 function saveRegistry(reg) {
-  try {
-    writeFileSync(CONTACTS_PATH, JSON.stringify(reg, null, 2), 'utf8');
-  } catch (err) {
-    console.error('[identity-resolver] Failed to save registry:', err.message);
-  }
+  if (_savePending) return;
+  _savePending = true;
+  setImmediate(() => {
+    _savePending = false;
+    try {
+      writeFileSync(CONTACTS_PATH, JSON.stringify(reg, null, 2), 'utf8');
+    } catch (err) {
+      console.error('[identity-resolver] Failed to save registry:', err.message);
+    }
+  });
 }
 
 // ─── Formatting ──────────────────────────────────────────────────────────────

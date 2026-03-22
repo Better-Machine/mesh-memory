@@ -2,17 +2,21 @@
   "agentId": "agent-a",
   "receiverPort": 18803,
   "receiverToken": "replace-with-your-token",
+  "threadPort": 18802,
   "watchPath": "~/.openclaw/agents/main/sessions/",
   "relayEnabled": false,
+  "relayMaxQueueDepth": 500,
   "peers": [
     {
       "agentId": "agent-b",
       "url": "http://192.168.1.101:18803",
+      "threadUrl": "http://192.168.1.101:18802",
       "token": "replace-with-peer-token"
     },
     {
       "agentId": "agent-c",
       "url": "http://192.168.1.102:18803",
+      "threadUrl": "http://192.168.1.102:18802",
       "token": "replace-with-peer-token"
     }
   ]
