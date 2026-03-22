@@ -11,8 +11,6 @@ import { createConsentRouter } from "./thread-consent.mjs";
 import { createContextRouter } from "./thread-context.mjs";
 import { createCloseRouter, checkTimeouts } from "./thread-close.mjs";
 
-const THREAD_PORT = 18802;
-
 let server = null;
 let timeoutInterval = null;
 
@@ -22,6 +20,8 @@ let timeoutInterval = null;
  */
 export async function start() {
   const config = loadConfig();
+  // M4: Read port from config, fall back to 18802
+  const THREAD_PORT = config.threadPort || 18802;
   const app = express();
 
   app.use(express.json({ limit: "1mb" }));
@@ -46,12 +46,21 @@ export async function start() {
   });
 
   // Start server
-  server = await new Promise((resolve) => {
+  server = await new Promise((resolve, reject) => {
     const s = app.listen(THREAD_PORT, () => {
       console.log(`[thread-manager] Agent: ${config.agentId}`);
       console.log(`[thread-manager] Listening on port ${THREAD_PORT}`);
       console.log(`[thread-manager] Endpoints: /mesh/thread/propose, /mesh/thread/:id/write, /mesh/thread/:id/close`);
       resolve(s);
+    });
+    // M7: Attach error handler for port-in-use and other listen errors
+    s.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        console.error(`[thread-manager] Port ${THREAD_PORT} is already in use. Is another thread-manager running?`);
+      } else {
+        console.error("[thread-manager] Server error:", err.message);
+      }
+      process.exit(1);
     });
   });
 

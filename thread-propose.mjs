@@ -42,8 +42,17 @@ async function sendToPeer(peer, proposal, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  // Peer thread endpoint is on port 18802, same host
-  const peerThreadUrl = peer.url.replace(/:18801\b/, ":18802");
+  // Peer thread endpoint URL: use explicit threadUrl if configured, else fall back to port substitution
+  let peerThreadUrl;
+  if (peer.threadUrl) {
+    peerThreadUrl = peer.threadUrl;
+  } else {
+    const substituted = peer.url.replace(/:18801\b/, ":18802");
+    if (substituted === peer.url) {
+      console.warn(`[thread-propose] Could not substitute port for peer ${peer.name} — threadUrl not set and port 18801 not found in url. Using url as-is.`);
+    }
+    peerThreadUrl = substituted;
+  }
 
   try {
     const res = await fetch(`${peerThreadUrl}/mesh/thread/propose`, {

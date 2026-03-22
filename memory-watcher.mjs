@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { relayEvent } from "./memory-relay.mjs";
 import { loadConfig } from "./config.mjs";
-import { evaluatePrivacy, privacySensitivityHints } from "./privacy.mjs";
+import { evaluatePrivacy, privacySensitivityHints, resetSession } from "./privacy.mjs";
 import { detectTags, taggingSuggestion, writeLessonEntry } from "./lesson-tagger.mjs";
 import { resolveConversation } from "./identity-resolver.mjs";
 
@@ -42,7 +42,7 @@ async function readDelta(filePath) {
 
   const buf = await readFile(filePath);
   const delta = buf.subarray(offset).toString("utf-8");
-  fileOffsets.set(filePath, fileStat.size);
+  // NOTE: do NOT advance fileOffsets here — caller advances per successfully-processed line (H3 fix)
 
   return delta.split("\n").filter((line) => line.trim().length > 0);
 }
@@ -148,15 +148,18 @@ async function handleFileChange(filePath, config) {
 
         if (privacy.action === "command") {
           console.log(`[watcher] Privacy command in session ${sessionKey}: ${privacy.reason}`);
+          // H3: advance offset after successful processing
+          fileOffsets.set(filePath, (fileOffsets.get(filePath) || 0) + Buffer.byteLength(line + "\n", "utf-8"));
           continue;
         }
 
         if (privacy.action === "suppress") {
           console.log(`[watcher] 🔒 Suppressed (${privacy.reason}): session ${sessionKey}`);
-          // Write a redacted notice locally so peers know a gap exists
-          event.content = "[redacted — private message]";
-          event.suppressed = true;
+          // L6: Write a redacted notice locally so peers know a gap exists (matches documented intent)
+          await writeLocal({ ...event, content: "[redacted — private message]", suppressed: true });
           // Do NOT relay suppressed messages
+          // H3: advance offset after successful processing
+          fileOffsets.set(filePath, (fileOffsets.get(filePath) || 0) + Buffer.byteLength(line + "\n", "utf-8"));
           continue;
         }
 
@@ -165,7 +168,7 @@ async function handleFileChange(filePath, config) {
           const hints = privacySensitivityHints(event.content);
           if (hints.shouldAsk) {
             console.log(`[watcher] 🔍 Sensitivity signals detected: ${hints.signals.join(", ")}`);
-            // Attach hints to event so receiving agent can surface them
+            // Attach hints to event for local agent awareness only — stripped before relay (M8 fix)
             event.privacyHints = hints.signals;
           }
         }
@@ -202,9 +205,14 @@ async function handleFileChange(filePath, config) {
         // Default is false — each agent owns their own memory.
         // Cross-agent sharing happens through thread proposals or direct A2A, not automatic relay.
         if (config.relayEnabled === true) {
-          await relayEvent(event, config);
+          // M8: Strip privacy hints and suggested tag before relaying to peers
+          const { privacyHints: _ph, suggestedTag: _st, ...relayPayload } = event;
+          await relayEvent(relayPayload, config);
         }
       }
+
+      // H3: advance offset after each successfully-processed line
+      fileOffsets.set(filePath, (fileOffsets.get(filePath) || 0) + Buffer.byteLength(line + "\n", "utf-8"));
     }
   } catch (err) {
     console.error(`[watcher] Error processing ${filePath}:`, err.message);
@@ -232,8 +240,23 @@ async function main() {
     }
   );
 
-  watcher.on("change", (filePath) => handleFileChange(filePath, config));
-  watcher.on("add", (filePath) => handleFileChange(filePath, config));
+  // L8: Attach .catch() to async event handlers to prevent unhandled promise rejections
+  watcher.on("change", (filePath) =>
+    handleFileChange(filePath, config).catch(err =>
+      console.error("[watcher] Unhandled error on change:", err.message)
+    )
+  );
+  watcher.on("add", (filePath) =>
+    handleFileChange(filePath, config).catch(err =>
+      console.error("[watcher] Unhandled error on add:", err.message)
+    )
+  );
+  // L7: Hook unlink to clean up sessionPrivateMode when a session JSONL file is removed
+  watcher.on("unlink", (filePath) => {
+    const sessionKey = filePath.split("/").pop().replace(".jsonl", "");
+    resetSession(sessionKey);
+    console.log(`[watcher] Session ended, privacy state cleared: ${sessionKey}`);
+  });
   watcher.on("error", (err) =>
     console.error("[watcher] Watch error:", err.message)
   );

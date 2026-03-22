@@ -43,7 +43,7 @@
  *    The mesh-memory receiver runs on port 18801. These are different services."
  */
 
-import { mkdir, appendFile } from "node:fs/promises";
+import { mkdir, appendFile, open } from "node:fs/promises";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -150,17 +150,19 @@ export async function writeLessonEntry(event, tags, cleanContent) {
   const filePath = getLessonsFilePath(new Date(event.timestamp));
   const entry = formatLessonEntry(event, tags, cleanContent);
 
-  // Write header on first entry of the day
+  // L4: Use flags:'a' (create-or-append) and check size atomically to avoid TOCTOU race
+  // Opening with 'a' creates the file if it doesn't exist; stat after open detects new vs existing
   const dayStr = new Date(event.timestamp).toISOString().slice(0, 10);
-  let header = "";
+  const fd = await open(filePath, "a");
   try {
-    const { stat } = await import("node:fs/promises");
-    await stat(filePath);
-  } catch {
-    header = `# Lessons · Corrections · Mistakes\n_${dayStr}_\n\n`;
+    const fileStat = await fd.stat();
+    const header = fileStat.size === 0
+      ? `# Lessons · Corrections · Mistakes\n_${dayStr}_\n\n`
+      : "";
+    await fd.appendFile(header + entry, "utf-8");
+  } finally {
+    await fd.close();
   }
-
-  await appendFile(filePath, header + entry, "utf-8");
 }
 
 /**
