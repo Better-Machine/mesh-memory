@@ -16,7 +16,8 @@ import { detectTags, taggingSuggestion, writeLessonEntry } from "./lesson-tagger
 import { resolveConversation } from "./identity-resolver.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const LOCAL_MESH_DIR = resolve(__dirname, "memory/mesh");
+// Write mesh output to workspace memory dir (where QMD indexes it), not project dir
+const LOCAL_MESH_DIR = resolve(homedir(), ".openclaw/workspace/memory/mesh");
 
 /**
  * @typedef {Object} MemoryEvent
@@ -231,14 +232,16 @@ async function main() {
   console.log(`[watcher] Agent: ${config.agentId}`);
   console.log(`[watcher] Watching: ${watchPaths.join(", ")}`);
 
-  const watcher = watch(
-    watchPaths.map((p) => `${p}/**/*.jsonl`),
-    {
-      persistent: true,
-      ignoreInitial: true,
-      awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
-    }
-  );
+  // Watch both flat files (sessions/*.jsonl) and nested (sessions/**/*.jsonl)
+  const watchGlobs = watchPaths.flatMap((p) => [
+    `${p}/*.jsonl`,
+    `${p}/**/*.jsonl`,
+  ]);
+  const watcher = watch(watchGlobs, {
+    persistent: true,
+    ignoreInitial: true,
+    awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+  });
 
   // L8: Attach .catch() to async event handlers to prevent unhandled promise rejections
   watcher.on("change", (filePath) =>
