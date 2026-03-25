@@ -97,6 +97,10 @@ node --version
 ```
 Expected: `v18.0.0` or higher. mesh-memory uses ES modules (`import`/`export`) and requires Node 18+.
 
+> **Node 25+ users:** `better-sqlite3 <v12` uses V8 APIs removed in Node 25 and will fail to compile. mesh-memory `^v0.1.0` ships with `^12.0.0` which resolves this. If you have an older clone, run `npm install better-sqlite3@^12.0.0` after `npm install`.
+
+> **Tested on:** Node v18, v20, v22 (all clean). Node v25 requires `better-sqlite3 ^12.0.0` (included since e628bee).
+
 ### 4. Verify network reachability between agents
 From each machine, ping every peer's port 18801:
 ```bash
@@ -154,6 +158,8 @@ cp mesh-memory.config.json mesh-memory.config.local.json
 ```
 
 > **Important:** Use `mesh-memory.config.local.json` for your real config. This file is gitignored and will never be committed. Never put real tokens in `mesh-memory.config.json`.
+
+> **Upgrading from an earlier install?** If you have an existing `mesh-memory.config.local.json`, verify it uses `watchPaths` (plural array), not the old `watchPath` (singular string). The key was renamed; old configs with the singular key will cause the watcher to silently watch nothing.
 
 Edit `mesh-memory.config.local.json`:
 ```json
