@@ -717,6 +717,94 @@ memory/threads/archive/<threadId>/
 
 ---
 
+## Shared Pool
+
+The shared pool is a structured, bias-resistant fact store that agents write to and read from. It implements the architecture defined in `research/CONSENSUS_BIAS_ARCHITECTURE.md`.
+
+### Storage
+
+Pool file: `~/.openclaw/workspace/memory/shared/pool.json`
+Audit log: `~/.openclaw/workspace/memory/shared/audit.jsonl`
+Gate files: `~/.openclaw/workspace/memory/shared/gates/`
+
+On first write, the pool is initialized with seed entries from `shared-pool.json` in the project root.
+
+### Writing
+
+```js
+import { writeEntry } from './shared-pool-write.mjs';
+
+await writeEntry({
+  type: "fact",          // observation|fact|inference|interpretation|role-assignment|prediction
+  category: "infra",
+  fact: "Receiver is running on port 18801",
+  tags: ["infra", "receiver"],
+  provenance: {
+    source_agent: "liz",
+    timestamp: new Date().toISOString(),
+    basis: "observed",    // observed|inferred|peer-relayed|self-assessed|external
+    confidence: 0.95,
+  }
+});
+```
+
+Or via CLI:
+```bash
+node shared-pool-write.mjs --agent liz --fact "thing I observed" --category infra --basis observed --confidence 0.9
+```
+
+### Reading (with blind gate — required)
+
+Before reading the shared pool on any topic requiring a position, you MUST commit your independent assessment first:
+
+```js
+import { openGate, readWithGate } from './blind-gate.mjs';
+
+// 1. Form your own position
+// 2. Commit it (only hash is stored — not text)
+const token = await openGate("deployment-readiness", "liz", "I believe deployment is ready because...");
+
+// 3. Read with gate token
+const entries = await readWithGate(token, { category: "infra" });
+```
+
+Skipping the gate throws with a clear protocol explanation. Gates expire after 10 minutes unused.
+
+### Read-path anonymization
+
+At read time, `provenance.source_agent` is stripped and replaced with the agent's role (from `mesh-memory.contacts.json`). Full attribution is written to `audit.jsonl` for human review only. This prevents name-based authority bias between agents.
+
+### Confidence decay
+
+Entries automatically decay in confidence over time:
+- `slow` (facts/observations): 0.995/day
+- `medium` (inferences/role-assignments): 0.985/day
+- `fast` (interpretations): 0.97/day
+- `bounded` (predictions): 1.0 until `review_by` date, then 0.0
+
+Entries with `effective_confidence < 0.5` are marked `stale: true`.
+
+### Peer sync
+
+```js
+import { syncToPeers } from './shared-pool-sync.mjs';
+
+const peers = [{ url: "http://ray-host:18801", token: "BEARER_TOKEN" }];
+await syncToPeers(entries, peers);
+```
+
+Peers receive entries via `POST /mesh/shared-pool`. The receiver forces `provenance.basis = "peer-relayed"` on all received entries. Rate limited to 1 req/sec/peer.
+
+### Testing
+
+```bash
+node --test tests/shared-pool.test.mjs
+# or
+npm run test:pool
+```
+
+---
+
 ## Questions, Issues, Contributions
 
 This is a live project in active development. If something doesn't work as documented, open an issue at https://github.com/Better-Machine/mesh-memory/issues.

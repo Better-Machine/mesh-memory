@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { loadConfig } from "./config.mjs";
 import { detectTags, writeLessonEntry } from "./lesson-tagger.mjs";
+import { receiveFromPeer } from "./shared-pool-sync.mjs";
 
 const MESH_DIR = resolve(homedir(), ".openclaw/workspace/memory/mesh");
 
@@ -145,6 +146,27 @@ async function main() {
       return res.status(200).json({ ok: true });
     } catch (err) {
       console.error("[receiver] Write error:", err.message);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /**
+   * POST /mesh/shared-pool — Receive a shared pool entry from a peer agent.
+   * Returns 201 on success, 409 on duplicate ID, 400 on invalid entry.
+   */
+  app.post("/mesh/shared-pool", async (req, res) => {
+    try {
+      const entry = await receiveFromPeer(req.body);
+      console.log(`[receiver] 🗂  Shared pool entry received: ${entry.id} (${entry.type})`);
+      return res.status(201).json({ ok: true, id: entry.id });
+    } catch (err) {
+      if (err.code === "DUPLICATE") {
+        return res.status(409).json({ error: "Duplicate entry ID", id: req.body?.id });
+      }
+      if (err.code === "INVALID") {
+        return res.status(400).json({ error: err.message });
+      }
+      console.error("[receiver] Shared pool write error:", err.message);
       return res.status(500).json({ error: "Internal server error" });
     }
   });

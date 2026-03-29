@@ -24,6 +24,7 @@ Install it on any OpenClaw agent. That agent now:
 - **Learns from mistakes** — tagged lessons, corrections, and decisions persist and survive session resets
 - **Consolidates nightly** — dream cycle runs at 2 AM, distilling recent context into long-term memory
 - **Respects privacy** — per-message and block-scoped suppression keeps sensitive context local
+- **Shared pool** — bias-resistant structured fact store across agents, with temporal decay, read-path anonymization, and pre-retrieval blind gate to prevent anchoring bias
 
 No peers required. No coordination. Works on day one with a single agent.
 
