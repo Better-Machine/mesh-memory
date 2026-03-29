@@ -11,6 +11,7 @@
     "dream": "node dream-cycle.mjs",
     "stress-test": "node stress-test.mjs",
     "threads": "node thread-manager.mjs",
+    "rotate": "node rotate-storage.mjs",
     "start": "concurrently \"npm run watcher\" \"npm run receiver\" \"npm run bridge\" \"npm run threads\""
   },
   "dependencies": {

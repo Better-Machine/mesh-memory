@@ -466,6 +466,33 @@ The dream cycle writes suggestions to:
 
 ---
 
+## Storage Rotation
+
+`rotate-storage.mjs` deletes stale memory files to keep disk usage bounded:
+
+| Directory | Pattern | Retention |
+|---|---|---|
+| `memory/mesh/` | `YYYY-MM-DD.md` | 30 days |
+| `memory/lcm/` | `YYYY-MM-DD.md` | 14 days |
+| `memory/` | `dream-cycle-*.md` | 7 days |
+
+Run manually:
+```bash
+npm run rotate
+# Preview without deleting:
+DRY_RUN=1 npm run rotate
+```
+
+**Cron setup** (add to crontab with `crontab -e`):
+```
+# Storage rotation — runs at 3:30 AM daily, after dream cycle
+30 3 * * * cd /home/your-user/.openclaw/workspace/projects/mesh-memory && node rotate-storage.mjs >> ~/.openclaw/logs/rotate-storage.log 2>&1
+```
+
+Replace `your-user` with your actual username.
+
+---
+
 ## Running the Stress Test
 
 The stress test validates system performance before full deployment.

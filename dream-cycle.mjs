@@ -23,14 +23,20 @@ async function readRecentFiles(dir) {
   const contents = [];
   try {
     const files = await readdir(dir);
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    // Build a set of recent date strings (today + yesterday in local time)
+    // Comparing by date string avoids UTC-midnight off-by-one errors when
+    // the machine's local time is ahead of UTC (e.g., EDT at 23:xx = UTC 03:xx+1).
+    const now = new Date();
+    const todayStr = now.toLocaleDateString("en-CA"); // YYYY-MM-DD local
+    const yd = new Date(now); yd.setDate(yd.getDate() - 1);
+    const yesterdayStr = yd.toLocaleDateString("en-CA");
+    const recentDates = new Set([todayStr, yesterdayStr]);
 
     for (const file of files) {
       if (!file.endsWith(".md")) continue;
       // Extract date from filename (YYYY-MM-DD.md)
       const dateStr = file.replace(".md", "");
-      const fileDate = new Date(dateStr);
-      if (isNaN(fileDate.getTime()) || fileDate.getTime() < cutoff) continue;
+      if (!recentDates.has(dateStr)) continue;
 
       const content = await readFile(resolve(dir, file), "utf-8");
       if (content.trim()) {
@@ -81,26 +87,38 @@ ${lcmContents.length > 0 ? lcmContents.join("\n\n---\n\n") : "(No LCM summaries 
 
 /**
  * Calls the OpenClaw agent API to generate consolidation suggestions.
+ * Uses `openclaw agent --local --agent main --json` which runs the agent
+ * in-process and returns the full text response.
  * @param {string} prompt - The consolidation prompt
  * @param {Object} config - Config object
  * @returns {Promise<string>} Agent response text
  */
 async function callAgent(prompt, config) {
-  // Use openclaw CLI to send the prompt
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const exec = promisify(execFile);
 
   try {
-    const { stdout } = await exec("openclaw", [
-      "system", "event",
-      "--text", prompt,
-      "--mode", "queue",
-    ], { timeout: 120000 });
-    return stdout.trim();
+    const { stdout, stderr } = await exec("openclaw", [
+      "agent",
+      "--local",
+      "--agent", "main",
+      "--message", prompt,
+      "--json",
+    ], { timeout: 300000, maxBuffer: 1024 * 1024 * 10 });
+
+    // openclaw agent --local --json emits the JSON result to stderr
+    // (plugin log lines also go there, so we find the first { in stderr)
+    const raw = stderr || stdout;
+    const jsonStart = raw.indexOf("{");
+    if (jsonStart === -1) throw new Error("No JSON in agent response");
+    const result = JSON.parse(raw.slice(jsonStart));
+    const text = result?.payloads?.[0]?.text;
+    if (!text) throw new Error("No text payload in agent response");
+    return text;
   } catch (err) {
-    // Fallback: write the prompt itself as the suggestion if API is unavailable
-    console.warn("[dream] OpenClaw API unavailable, writing raw prompt as output");
+    // Fallback: write the prompt as output so the dream cycle still produces a file
+    console.warn(`[dream] Agent API error (${err.message}), falling back to raw prompt`);
     return `# Dream Cycle — API Unavailable\n\nThe consolidation prompt was generated but the agent API could not be reached.\nManual review of the raw entries below is recommended.\n\n${prompt}`;
   }
 }
