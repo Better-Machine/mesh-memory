@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { appendFile } from "node:fs/promises";
 import { readAll } from "./shared-pool-read.mjs";
+import { loadConfig } from "./config.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -123,8 +124,61 @@ export async function openGate(topic, agentId, position) {
     gateToken: token.slice(0, 8) + "...", // partial token in audit only
   });
 
-  console.log(`[blind-gate] ✅ Gate opened for topic '${topic}' by '${agentId}' (expires in 10 min)`);
+  console.log(`[blind-gate] Gate opened for topic '${topic}' by '${agentId}' (expires in 10 min)`);
+
+  // Publish gate commitment to peers via HTTP (if configured)
+  await publishGateToPeers(topic, agentId, positionHash, token, timestamp);
+
   return token;
+}
+
+/**
+ * Publish a gate commitment to peer receivers via POST /mesh/shared/gates.
+ * Fails silently per-peer (logs warnings) — local gate is already written.
+ */
+async function publishGateToPeers(topic, agentId, positionHash, token, openedAt) {
+  let config;
+  try {
+    config = loadConfig();
+  } catch {
+    return; // no config — skip peer publishing
+  }
+
+  const receiverUrl = process.env.MESH_RECEIVER_URL || config.receiverUrl;
+  const receiverToken = process.env.MESH_RECEIVER_TOKEN || config.receiverToken;
+  const peers = config.peers || [];
+
+  if (peers.length === 0) return;
+
+  const expiresAt = new Date(new Date(openedAt).getTime() + GATE_TTL_MS).toISOString();
+  const body = JSON.stringify({ topic, agentId, positionHash, token, expiresAt });
+
+  for (const peer of peers) {
+    const url = peer.receiverUrl || peer.url;
+    const peerToken = peer.token || receiverToken;
+    if (!url) continue;
+
+    try {
+      const res = await fetch(`${url}/mesh/shared/gates`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${peerToken}`,
+        },
+        body,
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.status === 201) {
+        console.log(`[blind-gate] Gate published to peer ${url}`);
+      } else if (res.status === 409) {
+        console.log(`[blind-gate] Gate already exists on peer ${url}`);
+      } else {
+        console.warn(`[blind-gate] Peer ${url} returned ${res.status}`);
+      }
+    } catch (e) {
+      console.warn(`[blind-gate] Could not publish gate to ${url}: ${e.message}`);
+    }
+  }
 }
 
 /**
@@ -258,4 +312,87 @@ export async function hasActiveGate(agentId, topic) {
   }
 
   return false;
+}
+
+/**
+ * Poll peer receivers until all named peers have committed gates for a topic.
+ *
+ * @param {string} topic - The gate topic
+ * @param {string} agentId - This agent's ID (excluded from peer check)
+ * @param {string[]} peers - Array of peer agentIds to wait for
+ * @param {number} [timeoutMs=600000] - Max wait time (default 10 min)
+ * @returns {Promise<Object[]>} Array of committed gate objects from all peers
+ * @throws If timeout is reached before all peers commit
+ */
+export async function waitForPeerGates(topic, agentId, peers, timeoutMs = 600000) {
+  if (!Array.isArray(peers) || peers.length === 0) return [];
+
+  let config;
+  try {
+    config = loadConfig();
+  } catch {
+    throw new Error("[blind-gate] Cannot wait for peer gates: config not available");
+  }
+
+  const peerConfigs = config.peers || [];
+  const receiverToken = config.receiverToken;
+  const safeTopic = topic.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+  const deadline = Date.now() + timeoutMs;
+  const pollIntervalMs = 5000;
+
+  while (Date.now() < deadline) {
+    const committed = new Set();
+
+    for (const peerConf of peerConfigs) {
+      const url = peerConf.receiverUrl || peerConf.url;
+      const token = peerConf.token || receiverToken;
+      if (!url) continue;
+
+      try {
+        const res = await fetch(`${url}/mesh/shared/gates/${safeTopic}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) {
+          const gates = await res.json();
+          for (const g of gates) {
+            if (peers.includes(g.agentId)) committed.add(g.agentId);
+          }
+        }
+      } catch {
+        // peer unreachable — try again next poll
+      }
+    }
+
+    if (peers.every(p => committed.has(p))) {
+      // All peers committed — gather full gate list
+      const allGates = [];
+      for (const peerConf of peerConfigs) {
+        const url = peerConf.receiverUrl || peerConf.url;
+        const token = peerConf.token || receiverToken;
+        if (!url) continue;
+        try {
+          const res = await fetch(`${url}/mesh/shared/gates/${safeTopic}`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(5000),
+          });
+          if (res.ok) {
+            const gates = await res.json();
+            for (const g of gates) allGates.push(g);
+          }
+        } catch {
+          // skip unreachable peer in final gather
+        }
+      }
+      console.log(`[blind-gate] All peers committed for topic '${topic}'`);
+      return allGates;
+    }
+
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+  }
+
+  throw new Error(
+    `[blind-gate] Timeout waiting for peer gates on topic '${topic}'. ` +
+    `Expected peers: [${peers.join(", ")}]`
+  );
 }
