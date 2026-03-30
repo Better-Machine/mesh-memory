@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { writeEntry } from "./shared-pool-write.mjs";
 import { loadConfig } from "./config.mjs";
+import { waitForPeerGates } from "./blind-gate.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -149,6 +150,24 @@ export async function syncToPeers(entries, peers) {
 
   await saveSyncState(state);
   return summary;
+}
+
+/**
+ * Block until all peers have committed gates for a topic.
+ * Wraps waitForPeerGates for use in sync workflows.
+ *
+ * @param {string} topic - Gate topic to wait on
+ * @param {string[]} peers - Peer agentIds to wait for
+ * @param {number} [timeoutMs=600000] - Max wait time
+ * @returns {Promise<Object[]>} All committed gate objects
+ */
+export async function syncGates(topic, peers, timeoutMs = 600000) {
+  const config = loadConfig();
+  const agentId = config.agentId;
+  console.log(`[shared-pool-sync] Waiting for gate commitments from [${peers.join(", ")}] on topic '${topic}'...`);
+  const gates = await waitForPeerGates(topic, agentId, peers, timeoutMs);
+  console.log(`[shared-pool-sync] All ${peers.length} peers committed for topic '${topic}'.`);
+  return gates;
 }
 
 /**

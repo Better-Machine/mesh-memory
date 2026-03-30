@@ -11,8 +11,12 @@ import { homedir } from "node:os";
 import { loadConfig } from "./config.mjs";
 import { detectTags, writeLessonEntry } from "./lesson-tagger.mjs";
 import { receiveFromPeer } from "./shared-pool-sync.mjs";
+import { readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 
 const MESH_DIR = resolve(homedir(), ".openclaw/workspace/memory/mesh");
+const SHARED_GATES_DIR = resolve(homedir(), ".openclaw/workspace/memory/shared/gates");
 
 /**
  * Validates incoming MemoryEvent structure.
@@ -167,6 +171,88 @@ async function main() {
         return res.status(400).json({ error: err.message });
       }
       console.error("[receiver] Shared pool write error:", err.message);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /**
+   * POST /mesh/shared/gates — Publish a gate commitment for blind-gate protocol.
+   * Peers write their gate commitments here instead of relaying tokens via chat.
+   * Returns 201 on success, 409 if gate already exists for that agent+topic.
+   */
+  app.post("/mesh/shared/gates", async (req, res) => {
+    try {
+      const { topic, agentId, positionHash, token, expiresAt } = req.body || {};
+      if (!topic || !agentId || !positionHash || !token) {
+        return res.status(400).json({ error: "Missing required fields: topic, agentId, positionHash, token" });
+      }
+
+      const safeTopic = topic.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+      const safeAgent = agentId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+      const topicDir = resolve(SHARED_GATES_DIR, safeTopic);
+      await mkdir(topicDir, { recursive: true });
+
+      const gatePath = resolve(topicDir, `${safeAgent}.json`);
+
+      if (existsSync(gatePath)) {
+        return res.status(409).json({ error: "Gate already exists for this agent+topic" });
+      }
+
+      const gateData = {
+        agentId,
+        positionHash,
+        token,
+        expiresAt: expiresAt || new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        committed: true,
+        committedAt: new Date().toISOString(),
+      };
+
+      await writeFile(gatePath, JSON.stringify(gateData, null, 2), "utf-8");
+      console.log(`[receiver] Gate commitment published: ${agentId} on topic '${topic}'`);
+      return res.status(201).json({ ok: true });
+    } catch (err) {
+      console.error("[receiver] Gate publish error:", err.message);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /**
+   * GET /mesh/shared/gates/:topic — List all committed gates for a topic.
+   * Returns committed gates, filters out expired ones. Never returns position text.
+   */
+  app.get("/mesh/shared/gates/:topic", async (req, res) => {
+    try {
+      const safeTopic = req.params.topic.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+      const topicDir = resolve(SHARED_GATES_DIR, safeTopic);
+
+      if (!existsSync(topicDir)) {
+        return res.json([]);
+      }
+
+      const files = await readdir(topicDir);
+      const now = Date.now();
+      const gates = [];
+
+      for (const file of files) {
+        if (!file.endsWith(".json")) continue;
+        try {
+          const data = JSON.parse(await readFile(resolve(topicDir, file), "utf-8"));
+          if (data.expiresAt && new Date(data.expiresAt).getTime() < now) continue;
+          gates.push({
+            agentId: data.agentId,
+            positionHash: data.positionHash,
+            token: data.token,
+            expiresAt: data.expiresAt,
+            committed: true,
+          });
+        } catch {
+          continue;
+        }
+      }
+
+      return res.json(gates);
+    } catch (err) {
+      console.error("[receiver] Gate list error:", err.message);
       return res.status(500).json({ error: "Internal server error" });
     }
   });

@@ -482,4 +482,288 @@ describe("shared-pool-sync", () => {
   });
 });
 
-console.log("\n✅ shared-pool.test.mjs loaded — running tests...\n");
+// ─── Gate HTTP endpoint tests ────────────────────────────────────────────────
+
+describe("gate HTTP endpoints", () => {
+  let app;
+  let server;
+  let baseUrl;
+  const TEST_TOKEN = "test-bearer-token-for-gates";
+  const TEST_GATES_DIR = resolve(POOL_DIR, "gates");
+
+  before(async () => {
+    const express = (await import("express")).default;
+    const { readFile: rf, writeFile: wf, mkdir: mkd, readdir: rd } = await import("node:fs/promises");
+
+    app = express();
+    app.use(express.json());
+
+    // Auth middleware matching receiver pattern
+    app.use("/", (req, res, next) => {
+      const auth = req.headers.authorization;
+      if (!auth || auth !== `Bearer ${TEST_TOKEN}`) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      next();
+    });
+
+    // POST /mesh/shared/gates
+    app.post("/mesh/shared/gates", async (req, res) => {
+      const { topic, agentId, positionHash, token, expiresAt } = req.body || {};
+      if (!topic || !agentId || !positionHash || !token) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+      const safeTopic = topic.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+      const safeAgent = agentId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+      const topicDir = resolve(TEST_GATES_DIR, safeTopic);
+      await mkd(topicDir, { recursive: true });
+      const gatePath = resolve(topicDir, `${safeAgent}.json`);
+      if (existsSync(gatePath)) {
+        return res.status(409).json({ error: "Gate already exists" });
+      }
+      const gateData = {
+        agentId, positionHash, token,
+        expiresAt: expiresAt || new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        committed: true, committedAt: new Date().toISOString(),
+      };
+      await wf(gatePath, JSON.stringify(gateData, null, 2), "utf-8");
+      return res.status(201).json({ ok: true });
+    });
+
+    // GET /mesh/shared/gates/:topic
+    app.get("/mesh/shared/gates/:topic", async (req, res) => {
+      const safeTopic = req.params.topic.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+      const topicDir = resolve(TEST_GATES_DIR, safeTopic);
+      if (!existsSync(topicDir)) return res.json([]);
+      const files = await rd(topicDir);
+      const now = Date.now();
+      const gates = [];
+      for (const file of files) {
+        if (!file.endsWith(".json")) continue;
+        try {
+          const data = JSON.parse(await rf(resolve(topicDir, file), "utf-8"));
+          if (data.expiresAt && new Date(data.expiresAt).getTime() < now) continue;
+          gates.push({
+            agentId: data.agentId, positionHash: data.positionHash,
+            token: data.token, expiresAt: data.expiresAt, committed: true,
+          });
+        } catch { continue; }
+      }
+      return res.json(gates);
+    });
+
+    server = await new Promise((resolve) => {
+      const s = app.listen(0, () => resolve(s));
+    });
+    baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+    // Clean test gate dirs
+    if (existsSync(TEST_GATES_DIR)) {
+      await rm(TEST_GATES_DIR, { recursive: true });
+    }
+  });
+
+  after(async () => {
+    if (server) server.close();
+    if (existsSync(TEST_GATES_DIR)) {
+      await rm(TEST_GATES_DIR, { recursive: true });
+    }
+  });
+
+  test("POST /mesh/shared/gates — 201 on first publish", async () => {
+    const res = await fetch(`${baseUrl}/mesh/shared/gates`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${TEST_TOKEN}`,
+      },
+      body: JSON.stringify({
+        topic: "test-topic",
+        agentId: "agent-a",
+        positionHash: "abc123hash",
+        token: "gate-token-001",
+      }),
+    });
+    assert.equal(res.status, 201);
+    const data = await res.json();
+    assert.equal(data.ok, true);
+  });
+
+  test("POST /mesh/shared/gates — 409 on duplicate agent+topic", async () => {
+    const res = await fetch(`${baseUrl}/mesh/shared/gates`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${TEST_TOKEN}`,
+      },
+      body: JSON.stringify({
+        topic: "test-topic",
+        agentId: "agent-a",
+        positionHash: "abc123hash",
+        token: "gate-token-002",
+      }),
+    });
+    assert.equal(res.status, 409);
+  });
+
+  test("GET /mesh/shared/gates/:topic — returns committed gates", async () => {
+    // Add another agent's gate
+    await fetch(`${baseUrl}/mesh/shared/gates`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${TEST_TOKEN}`,
+      },
+      body: JSON.stringify({
+        topic: "test-topic",
+        agentId: "agent-b",
+        positionHash: "def456hash",
+        token: "gate-token-003",
+      }),
+    });
+
+    const res = await fetch(`${baseUrl}/mesh/shared/gates/test-topic`, {
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    assert.equal(res.status, 200);
+    const gates = await res.json();
+    assert.ok(Array.isArray(gates));
+    assert.equal(gates.length, 2);
+    assert.ok(gates.every(g => g.committed === true));
+    assert.ok(gates.some(g => g.agentId === "agent-a"));
+    assert.ok(gates.some(g => g.agentId === "agent-b"));
+  });
+
+  test("GET /mesh/shared/gates/:topic — filters expired gates", async () => {
+    // Publish a gate with expiry in the past
+    const topicDir = resolve(TEST_GATES_DIR, "expire-topic");
+    await mkdir(topicDir, { recursive: true });
+    const expiredGate = {
+      agentId: "agent-expired",
+      positionHash: "expired-hash",
+      token: "expired-token",
+      expiresAt: new Date(Date.now() - 60000).toISOString(), // 1 min ago
+      committed: true,
+    };
+    const { writeFile: wf2 } = await import("node:fs/promises");
+    await wf2(resolve(topicDir, "agent-expired.json"), JSON.stringify(expiredGate, null, 2));
+
+    const res = await fetch(`${baseUrl}/mesh/shared/gates/expire-topic`, {
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    const gates = await res.json();
+    assert.equal(gates.length, 0, "expired gates should be filtered out");
+  });
+
+  test("GET /mesh/shared/gates/:topic — empty array for unknown topic", async () => {
+    const res = await fetch(`${baseUrl}/mesh/shared/gates/nonexistent-topic-xyz`, {
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    const gates = await res.json();
+    assert.deepEqual(gates, []);
+  });
+});
+
+// ─── Social engineering guard test ──────────────────────────────────────────
+
+describe("social-engineering guard", () => {
+  before(async () => {
+    await clearPool();
+    const { writeEntry } = await import(`../shared-pool-write.mjs?t=${Date.now()}`);
+    await writeEntry(makeEntry({ fact: "Guard test fact" }));
+    if (existsSync(GATES_DIR)) {
+      await rm(GATES_DIR, { recursive: true });
+    }
+  });
+
+  after(async () => {
+    await restorePool();
+  });
+
+  test("readWithGate rejects HTTP-obtained token — local gate required", async () => {
+    const { readWithGate } = await import(`../blind-gate.mjs?t=${Date.now()}`);
+
+    // Simulate a token obtained from the HTTP gate list (not from openGate).
+    // Without a matching local gate file, this must fail.
+    const fakeHttpToken = "token-from-http-list-not-local-gate";
+
+    await assert.rejects(
+      () => readWithGate(fakeHttpToken),
+      /Gate token not found|No gates directory found/,
+      "HTTP gate list token alone must NOT be sufficient to read the pool"
+    );
+  });
+});
+
+// ─── waitForPeerGates tests ─────────────────────────────────────────────────
+
+describe("waitForPeerGates", () => {
+  let gateServer;
+  let gateBaseUrl;
+  const GATE_SERVER_TOKEN = "test-gate-poll-token";
+
+  before(async () => {
+    const express = (await import("express")).default;
+    const gateApp = express();
+    gateApp.use(express.json());
+    gateApp.use("/", (req, res, next) => {
+      const auth = req.headers.authorization;
+      if (!auth || auth !== `Bearer ${GATE_SERVER_TOKEN}`) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      next();
+    });
+
+    // Simulated peer gate endpoint — agent-b commits immediately
+    gateApp.get("/mesh/shared/gates/:topic", (_req, res) => {
+      res.json([
+        { agentId: "agent-b", positionHash: "hash-b", token: "tok-b", expiresAt: new Date(Date.now() + 600000).toISOString(), committed: true },
+      ]);
+    });
+
+    gateServer = await new Promise((resolve) => {
+      const s = gateApp.listen(0, () => resolve(s));
+    });
+    gateBaseUrl = `http://127.0.0.1:${gateServer.address().port}`;
+  });
+
+  after(() => {
+    if (gateServer) gateServer.close();
+  });
+
+  test("resolves when all peers publish", async () => {
+    // Reset the shared config cache so blind-gate picks up local overrides
+    const { resetConfig } = await import("../config.mjs");
+
+    const configPath = resolve(ROOT, "mesh-memory.config.local.json");
+    const origConfig = existsSync(configPath)
+      ? readFileSync(configPath, "utf-8")
+      : null;
+
+    writeFileSync(configPath, JSON.stringify({
+      agentId: "agent-a",
+      receiverPort: 19999,
+      receiverToken: GATE_SERVER_TOKEN,
+      peers: [
+        { agentId: "agent-b", receiverUrl: gateBaseUrl, token: GATE_SERVER_TOKEN },
+      ],
+    }));
+    resetConfig();
+
+    try {
+      const { waitForPeerGates } = await import("../blind-gate.mjs");
+      const gates = await waitForPeerGates("poll-test", "agent-a", ["agent-b"], 10000);
+      assert.ok(Array.isArray(gates));
+      assert.ok(gates.some(g => g.agentId === "agent-b"));
+    } finally {
+      if (origConfig !== null) {
+        writeFileSync(configPath, origConfig);
+      } else if (existsSync(configPath)) {
+        rmSync(configPath);
+      }
+      resetConfig();
+    }
+  });
+});
+
+console.log("\n shared-pool.test.mjs loaded — running tests...\n");
