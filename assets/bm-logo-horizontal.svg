@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 160" width="620" height="160">
+  <rect width="620" height="160" fill="#0D0D0F"/>
+
+  <!-- Mark: centered at 80,80 -->
+  <!-- Central outlined circle — larger, heavier stroke -->
+  <circle cx="80" cy="80" r="26" fill="none" stroke="#E8E4DC" stroke-width="5"/>
+
+  <!-- 4 arms -->
+  <line x1="80" y1="54" x2="80" y2="26" stroke="#E8E4DC" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="80" y1="106" x2="80" y2="134" stroke="#E8E4DC" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="54" y1="80" x2="26" y2="80" stroke="#E8E4DC" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="106" y1="80" x2="134" y2="80" stroke="#E8E4DC" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Solid dot at end of each arm -->
+  <circle cx="80" cy="22" r="5" fill="#E8E4DC"/>
+  <circle cx="80" cy="138" r="5" fill="#E8E4DC"/>
+  <circle cx="22" cy="80" r="5" fill="#E8E4DC"/>
+  <circle cx="138" cy="80" r="5" fill="#E8E4DC"/>
+
+  <!-- Wordmark -->
+  <text x="162" y="95" font-family="'Helvetica Neue', 'Arial', sans-serif" font-size="40" letter-spacing="3">
+    <tspan font-weight="300" fill="#E8E4DC" opacity="0.78">BETTER</tspan><tspan font-weight="700" fill="#E8E4DC"> MACHINE</tspan>
+  </text>
+</svg>
