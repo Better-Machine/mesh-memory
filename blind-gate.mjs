@@ -155,7 +155,7 @@ async function publishGateToPeers(topic, agentId, positionHash, token, openedAt)
 
   for (const peer of peers) {
     const url = peer.receiverUrl || peer.url;
-    const peerToken = peer.token || receiverToken;
+    const peerToken = peer.receiverToken || peer.token || receiverToken;
     if (!url) continue;
 
     try {
