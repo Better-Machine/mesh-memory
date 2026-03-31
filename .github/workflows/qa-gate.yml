@@ -1,0 +1,71 @@
+name: QA Gate
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+  qa-report-check:
+    name: QA Report Present (if src/ changed)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for QA report when src/ changed
+        run: |
+          # Get the list of changed files in this PR
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          # Check if any src/ files changed
+          SRC_CHANGED=$(echo "$CHANGED" | grep -E '^src/' || true)
+
+          if [ -n "$SRC_CHANGED" ]; then
+            echo "src/ files changed — QA report required"
+            echo "$SRC_CHANGED"
+
+            # Check for QA report in the branch
+            QA_REPORT=$(find . -maxdepth 2 -name "QA_REPORT*.md" | head -1)
+
+            if [ -z "$QA_REPORT" ]; then
+              echo ""
+              echo "❌ FAIL: src/ files were changed but no QA_REPORT*.md found."
+              echo "A QA report is required for MVP-tier work that modifies src/ files."
+              echo "Create QA_REPORT.md or QA_REPORT_<feature>.md and commit it to this branch."
+              echo ""
+              echo "For POC/exploratory work, add [POC] to your PR title to skip this check."
+              exit 1
+            else
+              echo "✅ QA report found: $QA_REPORT"
+            fi
+          else
+            echo "No src/ changes — QA report not required"
+          fi
+
+        # PRs with [POC] or [DOCS] in title skip the QA report requirement
+        if: "!contains(github.event.pull_request.title, '[POC]') && !contains(github.event.pull_request.title, '[DOCS]')"
