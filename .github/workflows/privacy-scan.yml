@@ -1,0 +1,161 @@
+name: Privacy Scan
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  privacy-scan:
+    name: Scan for Private Data
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan for private IPs
+        run: |
+          echo "Scanning for private IP addresses (192.168.x.x, 10.x.x.x, 172.16-31.x.x)..."
+          HITS=$(grep -rn \
+            --include="*.js" \
+            --include="*.mjs" \
+            --include="*.ts" \
+            --include="*.json" \
+            --include="*.md" \
+            --include="*.yml" \
+            --include="*.yaml" \
+            --include="*.sh" \
+            --exclude-dir=node_modules \
+            --exclude-dir=.git \
+            -E '192\.168\.[0-9]+\.[0-9]+|10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+' \
+            . 2>/dev/null || true)
+
+          if [ -n "$HITS" ]; then
+            echo ""
+            echo "❌ FAIL: Private IP addresses found:"
+            echo "$HITS"
+            echo ""
+            echo "Private IPs must not appear in committed code. Move to config.local.json (gitignored)."
+            exit 1
+          else
+            echo "✅ No private IPs found"
+          fi
+
+      - name: Scan for tokens and secrets
+        run: |
+          echo "Scanning for tokens and secrets..."
+
+          # Check for long hex strings (40+ chars — typical for auth tokens)
+          HEX_HITS=$(grep -rn \
+            --include="*.js" \
+            --include="*.mjs" \
+            --include="*.ts" \
+            --include="*.json" \
+            --include="*.yml" \
+            --include="*.yaml" \
+            --include="*.sh" \
+            --exclude-dir=node_modules \
+            --exclude-dir=.git \
+            -E '[a-fA-F0-9]{40,}' \
+            . 2>/dev/null | grep -v "\.min\." | grep -v "test\|spec\|fixture\|example\|sha256\|sha512\|hash" | head -20 || true)
+
+          # Check for API key patterns
+          KEY_HITS=$(grep -rn \
+            --include="*.js" \
+            --include="*.mjs" \
+            --include="*.ts" \
+            --include="*.json" \
+            --include="*.yml" \
+            --include="*.yaml" \
+            --include="*.sh" \
+            --exclude-dir=node_modules \
+            --exclude-dir=.git \
+            -E 'sk-[a-zA-Z0-9]{20,}|Bearer [a-zA-Z0-9._-]{20,}|api[_-]?key["\s]*[:=]["\s]*[a-zA-Z0-9._-]{10,}' \
+            . 2>/dev/null | head -20 || true)
+
+          FAIL=0
+          if [ -n "$KEY_HITS" ]; then
+            echo ""
+            echo "❌ FAIL: API key patterns found:"
+            echo "$KEY_HITS"
+            FAIL=1
+          fi
+
+          if [ -n "$HEX_HITS" ]; then
+            echo ""
+            echo "⚠️  WARNING: Long hex strings found (review manually):"
+            echo "$HEX_HITS"
+            echo "If these are legitimate (e.g., test UUIDs, hashes), this is informational only."
+          fi
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo ""
+            echo "Secrets must not be committed. Use environment variables or *.config.local.json (gitignored)."
+            exit 1
+          else
+            echo "✅ No API key patterns found"
+          fi
+
+      - name: Scan for local filesystem paths
+        run: |
+          echo "Scanning for local filesystem paths..."
+          HITS=$(grep -rn \
+            --include="*.js" \
+            --include="*.mjs" \
+            --include="*.ts" \
+            --include="*.json" \
+            --include="*.md" \
+            --include="*.yml" \
+            --include="*.yaml" \
+            --include="*.sh" \
+            --exclude-dir=node_modules \
+            --exclude-dir=.git \
+            -E '/home/[a-z][a-z0-9_-]+/' \
+            . 2>/dev/null | grep -v "POSTMORTEM\|ADR\|RFC\|TEMPLATE\|example\|Example" | head -20 || true)
+
+          if [ -n "$HITS" ]; then
+            echo ""
+            echo "❌ FAIL: Local filesystem paths found:"
+            echo "$HITS"
+            echo ""
+            echo "Hardcoded /home/username/ paths must not appear in committed code."
+            echo "Use relative paths, environment variables, or config files."
+            exit 1
+          else
+            echo "✅ No local filesystem paths found"
+          fi
+
+      - name: Scan for internal hostnames
+        run: |
+          echo "Scanning for internal hostnames..."
+          HITS=$(grep -rn \
+            --include="*.js" \
+            --include="*.mjs" \
+            --include="*.ts" \
+            --include="*.json" \
+            --include="*.yml" \
+            --include="*.yaml" \
+            --include="*.sh" \
+            --exclude-dir=node_modules \
+            --exclude-dir=.git \
+            -E '\b[a-zA-Z0-9-]+\.local\b' \
+            . 2>/dev/null | grep -v "localhost\|node_modules\|\.local\.json\|config\.local" | head -20 || true)
+
+          if [ -n "$HITS" ]; then
+            echo ""
+            echo "❌ FAIL: Internal hostnames (.local domains) found:"
+            echo "$HITS"
+            echo ""
+            echo "Internal hostnames must not appear in public repo code."
+            echo "Use environment variables or config files."
+            exit 1
+          else
+            echo "✅ No internal hostnames found"
+          fi
+
+      - name: Privacy scan summary
+        run: |
+          echo ""
+          echo "✅ Privacy scan complete — all checks passed"
