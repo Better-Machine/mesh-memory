@@ -44,6 +44,8 @@ if [[ ! -f "$MJS" ]]; then
 fi
 
 # Load peer URL and token
+# peers.json uses base URLs only (e.g. http://host:18800) — a2a-send.mjs constructs
+# the agent-card path internally. Do NOT append /a2a/jsonrpc here.
 PEER_DATA=$(python3 -c "
 import json, sys
 with open(sys.argv[1]) as f:
@@ -52,7 +54,7 @@ peer = peers.get(sys.argv[2])
 if not peer:
   print('UNKNOWN')
   sys.exit(1)
-print(peer['url'].replace('/a2a/jsonrpc', ''))
+print(peer['url'])
 print(peer['token'])
 " "$PEERS_FILE" "$PEER" 2>/dev/null)
 
