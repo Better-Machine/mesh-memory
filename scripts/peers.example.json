@@ -1,17 +1,17 @@
 {
   "woodhouse": {
     "hostname": "woodhouse-node",
-    "url": "http://<WOODHOUSE_HOST>:18800/a2a/jsonrpc",
+    "url": "http://<WOODHOUSE_HOST>:18800",
     "token": "<WOODHOUSE_BEARER_TOKEN>"
   },
   "ray": {
     "hostname": "ray-node",
-    "url": "http://<RAY_HOST>:18800/a2a/jsonrpc",
+    "url": "http://<RAY_HOST>:18800",
     "token": "<RAY_BEARER_TOKEN>"
   },
   "liz": {
     "hostname": "liz-node",
-    "url": "http://<LIZ_HOST>:18800/a2a/jsonrpc",
+    "url": "http://<LIZ_HOST>:18800",
     "token": "<LIZ_BEARER_TOKEN>"
   }
 }
