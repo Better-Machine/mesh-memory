@@ -6,6 +6,14 @@
   "watchPath": "~/.openclaw/agents/main/sessions/",
   "relayEnabled": false,
   "relayMaxQueueDepth": 500,
+  "memory": {
+    "backend": "local",
+    "mem0": {
+      "apiKey": "",
+      "selfHostUrl": ""
+    },
+    "local": {}
+  },
   "privacy": {
     "keywords": []
   },
