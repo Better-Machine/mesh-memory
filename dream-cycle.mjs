@@ -86,40 +86,74 @@ ${lcmContents.length > 0 ? lcmContents.join("\n\n---\n\n") : "(No LCM summaries 
 }
 
 /**
- * Calls the OpenClaw agent API to generate consolidation suggestions.
- * Uses `openclaw agent --local --agent main --json` which runs the agent
- * in-process and returns the full text response.
+ * Loads the Together AI API key from OpenClaw's auth-profiles.json.
+ * @returns {string} API key
+ */
+function loadTogetherKey() {
+  const { readFileSync } = require ? require("node:fs") : (() => { throw new Error("require not available"); })();
+  // Use static import-style read since this is ESM
+  return null; // loaded async below
+}
+
+/**
+ * Calls Together AI directly via OpenAI-compatible API to generate consolidation suggestions.
+ * Avoids `openclaw agent --local` which always uses the default Anthropic model and
+ * fails at 3 AM when Anthropic is overloaded.
+ *
+ * Model: meta-llama/Llama-3.3-70B-Instruct-Turbo — cheap, reliable, $0.88/M tokens.
+ *
  * @param {string} prompt - The consolidation prompt
  * @param {Object} config - Config object
  * @returns {Promise<string>} Agent response text
  */
 async function callAgent(prompt, config) {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const exec = promisify(execFile);
+  const { readFile } = await import("node:fs/promises");
+  const { homedir } = await import("node:os");
+  const { resolve } = await import("node:path");
+
+  // Load Together AI key from openclaw auth-profiles
+  let apiKey;
+  try {
+    const profilesPath = resolve(homedir(), ".openclaw/agents/main/agent/auth-profiles.json");
+    const profiles = JSON.parse(await readFile(profilesPath, "utf-8"));
+    apiKey = profiles?.profiles?.["together:default"]?.key
+          || profiles?.profiles?.["openai:together"]?.token;
+    if (!apiKey) throw new Error("together:default key not found in auth-profiles.json");
+  } catch (err) {
+    console.warn(`[dream] Could not load Together AI key: ${err.message}`);
+    return `# Dream Cycle — API Unavailable\n\nCould not load Together AI credentials. Manual review recommended.\n\n${prompt}`;
+  }
 
   try {
-    const { stdout, stderr } = await exec("openclaw", [
-      "agent",
-      "--local",
-      "--agent", "main",
-      "--message", prompt,
-      "--json",
-    ], { timeout: 300000, maxBuffer: 1024 * 1024 * 10 });
+    const response = await fetch("https://api.together.xyz/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        messages: [
+          { role: "user", content: prompt }
+        ],
+        max_tokens: 4096,
+        temperature: 0.3,
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
 
-    // openclaw agent --local --json emits the JSON result to stderr
-    // (plugin log lines also go there, so we find the first { in stderr)
-    const raw = stderr || stdout;
-    const jsonStart = raw.indexOf("{");
-    if (jsonStart === -1) throw new Error("No JSON in agent response");
-    const result = JSON.parse(raw.slice(jsonStart));
-    const text = result?.payloads?.[0]?.text;
-    if (!text) throw new Error("No text payload in agent response");
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Together AI HTTP ${response.status}: ${body.slice(0, 200)}`);
+    }
+
+    const data = await response.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (!text) throw new Error("No content in Together AI response");
     return text;
   } catch (err) {
-    // Fallback: write the prompt as output so the dream cycle still produces a file
-    console.warn(`[dream] Agent API error (${err.message}), falling back to raw prompt`);
-    return `# Dream Cycle — API Unavailable\n\nThe consolidation prompt was generated but the agent API could not be reached.\nManual review of the raw entries below is recommended.\n\n${prompt}`;
+    console.warn(`[dream] Together AI call failed (${err.message}), falling back to raw prompt`);
+    return `# Dream Cycle — API Unavailable\n\nThe consolidation prompt was generated but the Together AI call failed: ${err.message}\nManual review of the raw entries below is recommended.\n\n${prompt}`;
   }
 }
 
