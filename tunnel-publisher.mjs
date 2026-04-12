@@ -33,14 +33,21 @@ const RETRY_BACKOFF_MS = [1000, 5000, 15000]; // Exponential backoff: 1s, 5s, 15
 
 // Interpretation keywords that disqualify content from tunnel transmission
 const INTERPRETATION_KEYWORDS = [
+  "believe",
   "believes",
+  "think",
   "thinks",
   "probably",
   "likely",
+  "seem",
   "seems",
+  "appear",
   "appears",
+  "feel",
   "feels",
+  "suggest",
   "suggests",
+  "imply",
   "implies",
   "assessment",
   "opinion",

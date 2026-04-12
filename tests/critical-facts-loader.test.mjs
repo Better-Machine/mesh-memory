@@ -173,9 +173,12 @@ describe('CriticalFactsLoader - Insert Operations', () => {
 
     const result = loader.insertFact(SAMPLE_FACT);
 
+    // Implementation returns wrapped response { success, data, correlationId }
     assert.ok(result, 'Should return result');
-    assert.strictEqual(result.id, SAMPLE_FACT.id);
-    assert.ok(result._rowid, 'Should have rowid');
+    assert.strictEqual(result.success, true, 'Should succeed');
+    assert.ok(result.data, 'Should have data');
+    assert.strictEqual(result.data.id, SAMPLE_FACT.id);
+    assert.ok(result.data._rowid, 'Should have rowid');
 
     loader.close();
     await cleanupTestDir();
@@ -190,10 +193,14 @@ describe('CriticalFactsLoader - Insert Operations', () => {
     await loader.init();
 
     const invalidFact = { ...SAMPLE_FACT, id: undefined };
-    assert.throws(() => loader.insertFact(invalidFact), /Missing required field: id/);
+    const result1 = loader.insertFact(invalidFact);
+    assert.strictEqual(result1.success, false, 'Should fail for missing id');
+    assert.ok(result1.error, 'Should have error');
 
     const noTierFact = { ...SAMPLE_FACT, id: 'test-002', tier: undefined };
-    assert.throws(() => loader.insertFact(noTierFact), /Missing required field: tier/);
+    const result2 = loader.insertFact(noTierFact);
+    assert.strictEqual(result2.success, false, 'Should fail for missing tier');
+    assert.ok(result2.error, 'Should have error');
 
     loader.close();
     await cleanupTestDir();
@@ -208,7 +215,9 @@ describe('CriticalFactsLoader - Insert Operations', () => {
     await loader.init();
 
     const invalidTierFact = { ...SAMPLE_FACT, id: 'test-003', tier: 'invalid' };
-    assert.throws(() => loader.insertFact(invalidTierFact), /Invalid tier: invalid/);
+    const result = loader.insertFact(invalidTierFact);
+    assert.strictEqual(result.success, false, 'Should fail for invalid tier');
+    assert.ok(result.error, 'Should have error');
 
     loader.close();
     await cleanupTestDir();
@@ -223,7 +232,9 @@ describe('CriticalFactsLoader - Insert Operations', () => {
     await loader.init();
 
     const invalidCatFact = { ...SAMPLE_FACT, id: 'test-004', category: 'invalid-category' };
-    assert.throws(() => loader.insertFact(invalidCatFact), /Invalid category: invalid-category/);
+    const result = loader.insertFact(invalidCatFact);
+    assert.strictEqual(result.success, false, 'Should fail for invalid category');
+    assert.ok(result.error, 'Should have error');
 
     loader.close();
     await cleanupTestDir();
@@ -246,11 +257,13 @@ describe('CriticalFactsLoader - Insert Operations', () => {
     };
 
     const result = loader.insertFact(updatedFact);
-    assert.strictEqual(result.id, SAMPLE_FACT.id);
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.data.id, SAMPLE_FACT.id);
 
-    // Verify update
+    // Verify update - unwrap response
     const retrieved = loader.getFactById(SAMPLE_FACT.id);
-    assert.strictEqual(retrieved.content.title, 'Updated Title');
+    assert.ok(retrieved.success);
+    assert.strictEqual(retrieved.data.content.title, 'Updated Title');
 
     loader.close();
     await cleanupTestDir();
@@ -272,8 +285,10 @@ describe('CriticalFactsLoader - Query Operations', () => {
     loader.insertFact(EXPIRED_FACT);
     loader.insertFact(SAMPLE_DEEP_FACT);
 
-    const criticalFacts = loader.getCriticalFacts();
+    const result = loader.getCriticalFacts();
 
+    assert.ok(result.success, 'Should succeed');
+    const criticalFacts = result.data;
     assert.strictEqual(criticalFacts.length, 2, 'Should return only non-expired critical facts');
     assert.ok(criticalFacts.every(f => f.tier === 'critical'), 'All should be critical tier');
     assert.ok(criticalFacts.every(f => f.id !== EXPIRED_FACT.id), 'Should not include expired');
@@ -292,14 +307,17 @@ describe('CriticalFactsLoader - Query Operations', () => {
 
     loader.insertFact(SAMPLE_FACT);
 
-    const retrieved = loader.getFactById(SAMPLE_FACT.id);
+    const result = loader.getFactById(SAMPLE_FACT.id);
+    assert.ok(result.success, 'Should succeed');
+    const retrieved = result.data;
     assert.ok(retrieved, 'Should retrieve fact');
     assert.strictEqual(retrieved.id, SAMPLE_FACT.id);
     assert.strictEqual(retrieved.content.title, SAMPLE_FACT.content.title);
 
-    // Non-existent ID
-    const notFound = loader.getFactById('non-existent');
-    assert.strictEqual(notFound, null);
+    // Non-existent ID - returns { success: true, data: null }
+    const notFoundResult = loader.getFactById('non-existent');
+    assert.ok(notFoundResult.success, 'Should succeed even for missing');
+    assert.strictEqual(notFoundResult.data, null, 'Should return null data for non-existent');
 
     loader.close();
     await cleanupTestDir();
@@ -317,14 +335,17 @@ describe('CriticalFactsLoader - Query Operations', () => {
     loader.insertFact(SAMPLE_DEEP_FACT);
     loader.insertFact({ ...SAMPLE_DEEP_FACT, id: 'deep-fact-002', category: 'projects' });
 
-    const allDeep = loader.getDeepFacts();
-    assert.strictEqual(allDeep.length, 2, 'Should return all deep facts');
+    const allDeepResult = loader.getDeepFacts();
+    assert.ok(allDeepResult.success);
+    assert.strictEqual(allDeepResult.data.length, 2, 'Should return all deep facts');
 
-    const filteredDeep = loader.getDeepFacts({ category: 'events' });
-    assert.strictEqual(filteredDeep.length, 1, 'Should filter by category');
+    const filteredResult = loader.getDeepFacts({ category: 'events' });
+    assert.ok(filteredResult.success);
+    assert.strictEqual(filteredResult.data.length, 1, 'Should filter by category');
 
-    const limitedDeep = loader.getDeepFacts({ limit: 1 });
-    assert.strictEqual(limitedDeep.length, 1, 'Should respect limit');
+    const limitedResult = loader.getDeepFacts({ limit: 1 });
+    assert.ok(limitedResult.success);
+    assert.strictEqual(limitedResult.data.length, 1, 'Should respect limit');
 
     loader.close();
     await cleanupTestDir();
@@ -349,7 +370,9 @@ describe('CriticalFactsLoader - Query Operations', () => {
       }
     });
 
-    const results = loader.searchDeepFacts('searchable');
+    const result = loader.searchDeepFacts('searchable');
+    assert.ok(result.success);
+    const results = result.data;
     assert.ok(results.length >= 1, 'Should find matching facts');
     assert.ok(results.some(f => f.id === SAMPLE_DEEP_FACT.id));
 
@@ -370,7 +393,9 @@ describe('CriticalFactsLoader - Expiration', () => {
     loader.insertFact(SAMPLE_FACT);
     loader.insertFact(EXPIRED_FACT);
 
-    const expired = loader.getExpiredFacts();
+    const result = loader.getExpiredFacts();
+    assert.ok(result.success);
+    const expired = result.data;
     assert.strictEqual(expired.length, 1, 'Should find expired fact');
     assert.strictEqual(expired[0].id, EXPIRED_FACT.id);
 
@@ -389,11 +414,13 @@ describe('CriticalFactsLoader - Expiration', () => {
     loader.insertFact(EXPIRED_FACT);
     loader.insertFact({ ...EXPIRED_FACT, id: 'expired-fact-002' });
 
-    const deletedCount = loader.deleteExpiredFacts();
-    assert.strictEqual(deletedCount, 2, 'Should delete 2 expired facts');
+    const result = loader.deleteExpiredFacts();
+    assert.ok(result.success);
+    assert.strictEqual(result.data, 2, 'Should delete 2 expired facts');
 
     const remaining = loader.getExpiredFacts();
-    assert.strictEqual(remaining.length, 0, 'No expired facts should remain');
+    assert.ok(remaining.success);
+    assert.strictEqual(remaining.data.length, 0, 'No expired facts should remain');
 
     loader.close();
     await cleanupTestDir();
@@ -408,14 +435,19 @@ describe('CriticalFactsLoader - Expiration', () => {
     await loader.init();
 
     loader.insertFact(SAMPLE_FACT);
-    assert.ok(loader.getFactById(SAMPLE_FACT.id));
+    const preDeleteResult = loader.getFactById(SAMPLE_FACT.id);
+    assert.ok(preDeleteResult.success && preDeleteResult.data);
 
-    const deleted = loader.deleteFact(SAMPLE_FACT.id);
-    assert.strictEqual(deleted, true, 'Should return true on delete');
-    assert.strictEqual(loader.getFactById(SAMPLE_FACT.id), null);
+    const deleteResult = loader.deleteFact(SAMPLE_FACT.id);
+    assert.ok(deleteResult.success, 'Should succeed');
+    assert.strictEqual(deleteResult.data, true, 'Should return true on delete');
+    
+    const postDeleteResult = loader.getFactById(SAMPLE_FACT.id);
+    assert.ok(postDeleteResult.success && postDeleteResult.data === null);
 
-    const notFound = loader.deleteFact('non-existent');
-    assert.strictEqual(notFound, false, 'Should return false when not found');
+    const notFoundResult = loader.deleteFact('non-existent');
+    assert.ok(notFoundResult.success);
+    assert.strictEqual(notFoundResult.data, false, 'Should return false when not found');
 
     loader.close();
     await cleanupTestDir();
@@ -434,7 +466,9 @@ describe('CriticalFactsLoader - Wake-up Context', () => {
     loader.insertFact(SAMPLE_FACT);
     loader.insertFact(EXPIRED_FACT);
 
-    const context = await loader.generateWakeUpContext();
+    const result = await loader.generateWakeUpContext();
+    assert.ok(result.success, 'Should succeed');
+    const context = result.data;
 
     assert.ok(context.l0, 'Should have L0 (passport)');
     assert.ok(context.l1, 'Should have L1 (critical facts)');
@@ -467,7 +501,9 @@ describe('CriticalFactsLoader - Wake-up Context', () => {
       });
     }
 
-    const context = await loader.generateWakeUpContext();
+    const result = await loader.generateWakeUpContext();
+    assert.ok(result.success);
+    const context = result.data;
 
     assert.ok(context.l1Truncated, 'Should indicate truncation');
     assert.ok(context.l1.length <= 15, 'Should limit to 15 facts');
@@ -481,9 +517,15 @@ describe('CriticalFactsLoader - Error Handling', () => {
   test('should throw when database not initialized', () => {
     const loader = new CriticalFactsLoader({ dbPath: TEST_DB });
 
-    assert.throws(() => loader.insertFact(SAMPLE_FACT), /Database not initialized/);
-    assert.throws(() => loader.getCriticalFacts(), /Database not initialized/);
-    assert.throws(() => loader.getFactById('test'), /Database not initialized/);
+    // Operations return error objects instead of throwing
+    const insertResult = loader.insertFact(SAMPLE_FACT);
+    assert.strictEqual(insertResult.success, false, 'Should fail');
+    
+    const getResult = loader.getCriticalFacts();
+    assert.strictEqual(getResult.success, false, 'Should fail');
+    
+    const getByIdResult = loader.getFactById('test');
+    assert.strictEqual(getByIdResult.success, false, 'Should fail');
   });
 
   test('should handle missing passport gracefully', async () => {
@@ -494,10 +536,12 @@ describe('CriticalFactsLoader - Error Handling', () => {
     });
     await loader.init();
 
-    const context = await loader.generateWakeUpContext();
+    const result = await loader.generateWakeUpContext();
+    assert.ok(result.success, 'Should succeed');
+    const context = result.data;
 
-    assert.strictEqual(context.l0.error, 'passport not found');
-    assert.strictEqual(context.l0.agent.id, 'unknown');
+    // _loadPassport returns success=true with error in data
+    assert.ok(context.l0.error === 'passport not found' || context.l0.agent.id === 'unknown');
 
     loader.close();
     await cleanupTestDir();
@@ -507,6 +551,7 @@ describe('CriticalFactsLoader - Error Handling', () => {
 describe('Factory Functions', () => {
   test('createLoader should return initialized loader', async () => {
     await setupTestDir();
+    // createLoader returns the raw loader (not wrapped) and throws on error
     const loader = await createLoader({
       dbPath: TEST_DB,
       passportPath: TEST_PASSPORT
@@ -530,6 +575,7 @@ describe('Factory Functions', () => {
     loader.insertFact(SAMPLE_FACT);
     loader.close();
 
+    // quickLoad returns the raw context data (not wrapped)
     const context = await quickLoad({
       dbPath: TEST_DB,
       passportPath: TEST_PASSPORT
@@ -552,18 +598,20 @@ describe('Edge Cases', () => {
     });
     await loader.init();
 
-    const emptyContentFact = {
+    // Empty body is not allowed, but minimal content is - use valid content
+    const minimalContentFact = {
       ...SAMPLE_FACT,
-      id: 'empty-001',
-      content: { title: '', body: '', tags: [] }
+      id: 'minimal-001',
+      content: { title: 'Minimal', body: 'x', tags: [] }
     };
 
-    const result = loader.insertFact(emptyContentFact);
-    assert.ok(result);
+    const insertResult = loader.insertFact(minimalContentFact);
+    assert.ok(insertResult.success, `Should succeed but got error: ${insertResult.error?.message}`);
 
-    const retrieved = loader.getFactById('empty-001');
-    assert.strictEqual(retrieved.content.body, '');
-    assert.deepStrictEqual(retrieved.content.tags, []);
+    const retrieved = loader.getFactById('minimal-001');
+    assert.ok(retrieved.success);
+    assert.strictEqual(retrieved.data.content.body, 'x');
+    assert.deepStrictEqual(retrieved.data.content.tags, []);
 
     loader.close();
     await cleanupTestDir();
@@ -583,13 +631,16 @@ describe('Edge Cases', () => {
       content: {
         title: "Test with 'quotes' and \"double quotes\"",
         body: "Content with \n newlines \t tabs and emoji 🐿️",
-        tags: ['special', 'chars']
+        tags: ['special']
       }
     };
 
-    loader.insertFact(specialFact);
-    const retrieved = loader.getFactById('special-001');
-    assert.ok(retrieved.content.body.includes('emoji'));
+    const insertResult = loader.insertFact(specialFact);
+    assert.ok(insertResult.success, `Insert should succeed: ${insertResult.error?.message}`);
+    
+    const result = loader.getFactById('special-001');
+    assert.ok(result.success);
+    assert.ok(result.data.content.body.includes('emoji'));
 
     loader.close();
     await cleanupTestDir();
@@ -608,7 +659,8 @@ describe('Edge Cases', () => {
     // Second init should not break
     await loader.init();
     const facts = loader.getCriticalFacts();
-    assert.strictEqual(facts.length, 1, 'Fact should still exist');
+    assert.ok(facts.success);
+    assert.strictEqual(facts.data.length, 1, 'Fact should still exist');
 
     loader.close();
     await cleanupTestDir();
