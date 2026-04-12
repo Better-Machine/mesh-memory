@@ -80,7 +80,7 @@ These fact types are tunnel-safe:
   "type": "config",
   "id": "cfg-ray-receiver",
   "content": "Ray receiver endpoint updated",
-  "value": "http://192.168.50.22:18803",
+  "value": "http://192.168.x.x:18803",
   "effective_from": "2026-04-11T20:00:00Z"
 }
 ```

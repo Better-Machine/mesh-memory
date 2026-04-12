@@ -170,12 +170,13 @@
       "category": "infrastructure",
       "content": {
         "title": "Mesh Node Topology",
-        "body": "Ray: 192.168.50.22 (RTX 4090), Liz: 192.168.50.23 (RTX 4090), Woodhouse: 192.168.50.24. A2A Gateway: port 18800. Mesh Receiver: port 18803. All nodes require /etc/hosts entries.",
+        "body": "Ray: 192.168.x.22 (RTX 4090), Liz: 192.168.x.23 (RTX 4090), Woodhouse: 192.168.x.24. A2A Gateway: port 18800. Mesh Receiver: port 18803. All nodes require /etc/hosts entries.",
         "tags": ["infrastructure", "network", "mesh"],
+        "_comment_nodes": "Replace x with actual subnet octet",
         "nodes": [
-          {"id": "ray", "ip": "192.168.50.22", "gpu": "RTX 4090"},
-          {"id": "liz", "ip": "192.168.50.23", "gpu": "RTX 4090"},
-          {"id": "woodhouse", "ip": "192.168.50.24", "gpu": null}
+          {"id": "ray", "ip": "192.168.x.22", "gpu": "RTX 4090"},
+          {"id": "liz", "ip": "192.168.x.23", "gpu": "RTX 4090"},
+          {"id": "woodhouse", "ip": "192.168.x.24", "gpu": null}
         ]
       },
       "provenance": {

@@ -17,7 +17,8 @@
     "thread-orchestration"
   ],
   "hardware_profile": {
-    "host": "192.168.50.23",
+    "_comment_host": "Replace with actual LAN IP before deployment",
+    "host": "192.168.x.x",
     "platform": "linux",
     "gpu": "RTX 4090",
     "gpu_vram_gb": 24,
@@ -25,21 +26,25 @@
     "inference_endpoints": [
       {
         "model": "NVIDIA Nemotron Super",
-        "url": "http://192.168.50.30:8080/completion",
+        "_comment_url": "Replace x.x with actual LAN IP octets",
+        "url": "http://192.168.x.x:8080/completion",
         "size": "120B",
         "context_length": 16384
       },
       {
         "model": "NVIDIA Nemotron Nano",
-        "url": "http://192.168.50.30:8081/completion",
+        "_comment_url": "Replace x.x with actual LAN IP octets",
+        "url": "http://192.168.x.x:8081/completion",
         "size": "4B",
         "context_length": 8192
       }
     ]
   },
   "mesh_identity": {
-    "a2a_url": "http://192.168.50.23:18800",
-    "receiver_url": "http://192.168.50.23:18803",
+    "_comment_a2a_url": "Replace x.x with actual LAN IP octets",
+    "a2a_url": "http://192.168.x.x:18800",
+    "_comment_receiver_url": "Replace x.x with actual LAN IP octets",
+    "receiver_url": "http://192.168.x.x:18803",
     "receiver_port": 18803,
     "peer_token_hash": "sha256:eb2a778f75cd504c89dd7f65cf5fc5bdd6030da00b6499b6",
     "session_cohesion": {

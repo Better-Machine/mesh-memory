@@ -3,7 +3,7 @@
  * Loads L1 (critical) facts and L2 (deep) facts from SQLite
  * Generates wake-up context for session initialization
  *
- * @version 1.0.0
+ * @version 1.1.0
  * @module critical-facts-loader
  */
 
@@ -11,6 +11,8 @@ import Database from 'better-sqlite3';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
+import { PalaceError, ValidationError, DatabaseError, safeExecute, safeExecuteSync } from './palace-errors.mjs';
+import { createLogger, generateCorrelationId } from './palace-logger.mjs';
 
 /**
  * CriticalFactsLoader class
@@ -23,50 +25,87 @@ export class CriticalFactsLoader {
    * @param {string} options.dbPath - Path to SQLite database
    * @param {string} options.passportPath - Path to agent-passport.json
    * @param {boolean} options.verbose - Enable verbose logging
+   * @param {string} options.correlationId - Correlation ID for request tracing
    */
   constructor(options = {}) {
     this.dbPath = options.dbPath || './memory/critical-facts.db';
     this.passportPath = options.passportPath || './palace-mvp/agent-passport.json';
     this.verbose = options.verbose || false;
     this.db = null;
+    this.correlationId = options.correlationId || generateCorrelationId();
+    this.logger = createLogger({ minLevel: options.verbose ? 0 : 1 }, this.correlationId)
+      .child({ module: 'critical-facts-loader' });
   }
 
   /**
    * Initialize the database connection and create tables
-   * @returns {Promise<void>}
+   * @returns {Promise<Object>} { success: boolean, data?: any, error?: Object }
    */
   async init() {
-    // Ensure directory exists
-    const dbDir = path.dirname(this.dbPath);
-    if (!existsSync(dbDir)) {
-      await fs.mkdir(dbDir, { recursive: true });
-    }
+    return safeExecute(async () => {
+      this.logger.info('Initializing CriticalFactsLoader', { dbPath: this.dbPath });
 
-    // Open database
-    this.db = new Database(this.dbPath);
+      // Ensure directory exists
+      const dbDir = path.dirname(this.dbPath);
+      const dirResult = await safeExecute(async () => {
+        if (!existsSync(dbDir)) {
+          await fs.mkdir(dbDir, { recursive: true });
+        }
+        return true;
+      }, { operation: 'createDirectory', path: dbDir });
 
-    // Enable WAL mode for better concurrency
-    this.db.pragma('journal_mode = WAL');
+      if (!dirResult.success) {
+        throw new PalaceError('Failed to create database directory', {
+          code: 'INIT_FAILED',
+          context: { dbDir },
+          correlationId: this.correlationId
+        });
+      }
 
-    // Create tables
-    this._createTables();
+      // Open database with error handling
+      try {
+        this.db = new Database(this.dbPath);
+      } catch (err) {
+        throw DatabaseError.connection(this.dbPath, err, { correlationId: this.correlationId });
+      }
 
-    // Create FTS5 index for deep facts
-    this._createFTSIndex();
+      // Enable WAL mode for better concurrency
+      try {
+        this.db.pragma('journal_mode = WAL');
+      } catch (err) {
+        this.logger.warn('Could not enable WAL mode', { error: err.message });
+        // Non-fatal: continue without WAL
+      }
 
-    if (this.verbose) {
-      console.log(`[critical-facts-loader] Initialized database at ${this.dbPath}`);
-    }
+      // Create tables
+      const tableResult = safeExecuteSync(() => {
+        this._createTables();
+        this._createFTSIndex();
+        return true;
+      }, { operation: 'createTables' });
+
+      if (!tableResult.success) {
+        throw DatabaseError.query('CREATE TABLE', tableResult.error, { correlationId: this.correlationId });
+      }
+
+      this.logger.info('Database initialized successfully');
+      return { initialized: true, dbPath: this.dbPath };
+    }, { operation: 'CriticalFactsLoader.init' });
   }
 
   /**
    * Close database connection
+   * @returns {Object} { success: boolean, error?: Object }
    */
   close() {
-    if (this.db) {
-      this.db.close();
-      this.db = null;
-    }
+    return safeExecuteSync(() => {
+      if (this.db) {
+        this.db.close();
+        this.db = null;
+        this.logger.info('Database connection closed');
+      }
+      return { closed: true };
+    }, { operation: 'close' });
   }
 
   /**
@@ -141,78 +180,117 @@ export class CriticalFactsLoader {
       this.db.exec(createFTSSQL);
       this.db.exec(createTriggersSQL);
     } catch (err) {
-      // FTS5 might not be available, log but continue
-      if (this.verbose) {
-        console.log(`[critical-facts-loader] FTS5 not available: ${err.message}`);
-      }
+      // FTS5 might not be available, log but continue (graceful degradation)
+      this.logger.warn('FTS5 not available, using fallback search', { error: err.message });
     }
   }
 
   /**
-   * Insert a new fact into the database
-   * @param {Object} fact - Fact object matching critical-facts.schema.json
-   * @returns {Object} - Inserted fact with id
+   * Validate fact structure
+   * @private
+   * @param {Object} fact - Fact to validate
+   * @returns {ValidationError|null} - Validation error or null if valid
    */
-  insertFact(fact) {
-    this._ensureDb();
+  _validateFact(fact) {
+    if (!fact || typeof fact !== 'object') {
+      return ValidationError.schema('Fact must be an object');
+    }
 
     // Validate required fields
     const requiredFields = ['id', 'tier', 'category', 'content', 'provenance', 'updated_at'];
     for (const field of requiredFields) {
       if (!fact[field]) {
-        throw new Error(`Missing required field: ${field}`);
+        return ValidationError.required(field, { factId: fact.id });
       }
     }
 
     // Validate tier
     if (!['critical', 'deep'].includes(fact.tier)) {
-      throw new Error(`Invalid tier: ${fact.tier}. Must be 'critical' or 'deep'`);
+      return ValidationError.invalid('tier', fact.tier, "'critical' or 'deep'", { factId: fact.id });
     }
 
     // Validate category
     const validCategories = ['standing_instructions', 'projects', 'people', 'infrastructure', 'blockers', 'events'];
     if (!validCategories.includes(fact.category)) {
-      throw new Error(`Invalid category: ${fact.category}`);
+      return ValidationError.invalid('category', fact.category, `one of: ${validCategories.join(', ')}`, { factId: fact.id });
     }
 
-    const sql = `
-      INSERT OR REPLACE INTO critical_facts (
-        id, tier, category, type, title, body, tags,
-        source, author, timestamp, source_version,
-        updated_at, expires_at, relations, content_extra
-      ) VALUES (
-        @id, @tier, @category, @type, @title, @body, @tags,
-        @source, @author, @timestamp, @source_version,
-        @updated_at, @expires_at, @relations, @content_extra
-      )
-    `;
-
-    const params = {
-      id: fact.id,
-      tier: fact.tier,
-      category: fact.category,
-      type: fact.type || null,
-      title: fact.content?.title || '',
-      body: fact.content?.body || '',
-      tags: fact.content?.tags ? JSON.stringify(fact.content.tags) : '[]',
-      source: fact.provenance?.source || 'unknown',
-      author: fact.provenance?.author || null,
-      timestamp: fact.provenance?.timestamp || new Date().toISOString(),
-      source_version: fact.provenance?.source_version || '1.0.0',
-      updated_at: fact.updated_at,
-      expires_at: fact.expires_at || null,
-      relations: fact.relations ? JSON.stringify(fact.relations) : '[]',
-      content_extra: this._extractExtraContent(fact.content)
-    };
-
-    const stmt = this.db.prepare(sql);
-    const result = stmt.run(params);
-
-    if (this.verbose) {
-      console.log(`[critical-facts-loader] Inserted fact: ${fact.id} (${fact.tier})`);
+    // Validate content structure
+    if (fact.content && typeof fact.content === 'object') {
+      if (!fact.content.title) {
+        return ValidationError.required('content.title', { factId: fact.id });
+      }
+      if (!fact.content.body) {
+        return ValidationError.required('content.body', { factId: fact.id });
+      }
     }
 
-    return { ...fact, _rowid: result.lastInsertRowid };
+    return null;
+  }
+
+  /**
+   * Insert a new fact into the database
+   * @param {Object} fact - Fact object matching critical-facts.schema.json
+   * @returns {Object} { success: boolean, data?: Object, error?: Object }
+   */
+  insertFact(fact) {
+    return safeExecuteSync(() => {
+      this._ensureDb();
+
+      // Validate input
+      const validationError = this._validateFact(fact);
+      if (validationError) {
+        this.logger.warn('Fact validation failed', { 
+          factId: fact?.id, 
+          errors: validationError.message 
+        });
+        throw validationError;
+      }
+
+      const sql = `
+        INSERT OR REPLACE INTO critical_facts (
+          id, tier, category, type, title, body, tags,
+          source, author, timestamp, source_version,
+          updated_at, expires_at, relations, content_extra
+        ) VALUES (
+          @id, @tier, @category, @type, @title, @body, @tags,
+          @source, @author, @timestamp, @source_version,
+          @updated_at, @expires_at, @relations, @content_extra
+        )
+      `;
+
+      const params = {
+        id: fact.id,
+        tier: fact.tier,
+        category: fact.category,
+        type: fact.type || null,
+        title: fact.content?.title || '',
+        body: fact.content?.body || '',
+        tags: fact.content?.tags ? JSON.stringify(fact.content.tags) : '[]',
+        source: fact.provenance?.source || 'unknown',
+        author: fact.provenance?.author || null,
+        timestamp: fact.provenance?.timestamp || new Date().toISOString(),
+        source_version: fact.provenance?.source_version || '1.0.0',
+        updated_at: fact.updated_at,
+        expires_at: fact.expires_at || null,
+        relations: fact.relations ? JSON.stringify(fact.relations) : '[]',
+        content_extra: this._extractExtraContent(fact.content)
+      };
+
+      try {
+        const stmt = this.db.prepare(sql);
+        const result = stmt.run(params);
+        
+        this.logger.info('Fact inserted', { factId: fact.id, tier: fact.tier, rowId: result.lastInsertRowid });
+        
+        return { ...fact, _rowid: result.lastInsertRowid };
+      } catch (err) {
+        throw DatabaseError.query('INSERT', err, { 
+          factId: fact.id, 
+          correlationId: this.correlationId 
+        });
+      }
+    }, { operation: 'insertFact', factId: fact?.id });
   }
 
   /**
@@ -233,74 +311,102 @@ export class CriticalFactsLoader {
 
   /**
    * Get all critical (L1) facts that are not expired
-   * @returns {Array<Object>} - Array of critical facts
+   * @returns {Object} { success: boolean, data?: Array, error?: Object }
    */
   getCriticalFacts() {
-    this._ensureDb();
+    return safeExecuteSync(() => {
+      this._ensureDb();
 
-    const now = new Date().toISOString();
-    const sql = `
-      SELECT * FROM critical_facts
-      WHERE tier = 'critical'
-        AND (expires_at IS NULL OR expires_at > @now)
-      ORDER BY updated_at DESC
-    `;
+      const now = new Date().toISOString();
+      const sql = `
+        SELECT * FROM critical_facts
+        WHERE tier = 'critical'
+          AND (expires_at IS NULL OR expires_at > @now)
+        ORDER BY updated_at DESC
+      `;
 
-    const stmt = this.db.prepare(sql);
-    const rows = stmt.all({ now });
-
-    return rows.map(row => this._rowToFact(row));
+      try {
+        const stmt = this.db.prepare(sql);
+        const rows = stmt.all({ now });
+        
+        this.logger.debug('Retrieved critical facts', { count: rows.length });
+        
+        return rows.map(row => this._rowToFact(row));
+      } catch (err) {
+        throw DatabaseError.query('SELECT critical_facts', err, { correlationId: this.correlationId });
+      }
+    }, { operation: 'getCriticalFacts' });
   }
 
   /**
    * Search deep (L2) facts using full-text search
    * @param {string} query - Search query
-   * @param {number} limit - Maximum results
-   * @returns {Array<Object>} - Array of matching deep facts
+   * @param {number} limit - Maximum results (default: 20)
+   * @returns {Object} { success: boolean, data?: Array, error?: Object }
    */
   searchDeepFacts(query, limit = 20) {
-    this._ensureDb();
+    return safeExecuteSync(() => {
+      this._ensureDb();
 
-    const now = new Date().toISOString();
+      // Validate inputs
+      if (!query || typeof query !== 'string') {
+        throw ValidationError.invalid('query', query, 'non-empty string');
+      }
+      if (typeof limit !== 'number' || limit < 1 || limit > 100) {
+        throw ValidationError.invalid('limit', limit, 'number between 1 and 100');
+      }
 
-    // Check if FTS table exists
-    const ftsExists = this.db.prepare(
-      "SELECT name FROM sqlite_master WHERE name = 'critical_facts_fts'"
-    ).get();
+      const now = new Date().toISOString();
 
-    let rows;
-    if (ftsExists) {
-      // Use FTS5 - use bm25 ranking for better relevance
-      const sql = `
-        SELECT f.* FROM critical_facts f
-        JOIN critical_facts_fts ON f.rowid = critical_facts_fts.rowid
-        WHERE critical_facts_fts MATCH @query
-          AND f.tier = 'deep'
-          AND (f.expires_at IS NULL OR f.expires_at > @now)
-        ORDER BY bm25(critical_facts_fts)
-        LIMIT @limit
-      `;
-      const stmt = this.db.prepare(sql);
-      rows = stmt.all({ query, now, limit });
-    } else {
-      // Fallback to LIKE search
-      const fallbackSql = `
-        SELECT * FROM critical_facts
-        WHERE tier = 'deep'
-          AND (expires_at IS NULL OR expires_at > @now)
-          AND (title LIKE @pattern OR body LIKE @pattern)
-        ORDER BY updated_at DESC
-        LIMIT @limit
-      `;
-      const fallbackStmt = this.db.prepare(fallbackSql);
-      rows = fallbackStmt.all({
-        pattern: `%${query}%`,
-        now,
-        limit
-      });
-    }
+      // Check if FTS table exists
+      const ftsExists = this.db.prepare(
+        "SELECT name FROM sqlite_master WHERE name = 'critical_facts_fts'"
+      ).get();
 
-    return rows.map(row => this._rowToFact(row));
+      let rows;
+      try {
+        if (ftsExists) {
+          // Use FTS5 - use bm25 ranking for better relevance
+          const sql = `
+            SELECT f.* FROM critical_facts f
+            JOIN critical_facts_fts ON f.rowid = critical_facts_fts.rowid
+            WHERE critical_facts_fts MATCH @query
+              AND f.tier = 'deep'
+              AND (f.expires_at IS NULL OR f.expires_at > @now)
+            ORDER BY bm25(critical_facts_fts)
+            LIMIT @limit
+          `;
+          const stmt = this.db.prepare(sql);
+          rows = stmt.all({ query, now, limit });
+        } else {
+          // Fallback to LIKE search (graceful degradation)
+          const fallbackSql = `
+            SELECT * FROM critical_facts
+            WHERE tier = 'deep'
+              AND (expires_at IS NULL OR expires_at > @now)
+              AND (title LIKE @pattern OR body LIKE @pattern)
+            ORDER BY updated_at DESC
+            LIMIT @limit
+          `;
+          const fallbackStmt = this.db.prepare(fallbackSql);
+          rows = fallbackStmt.all({
+            pattern: `%${query}%`,
+            now,
+            limit
+          });
+        }
+
+        this.logger.debug('Searched deep facts', { query, results: rows.length });
+        
+        return rows.map(row => this._rowToFact(row));
+      } catch (err) {
+        throw DatabaseError.query('searchDeepFacts', err, { 
+          query, 
+          limit, 
+          correlationId: this.correlationId 
+        });
+      }
+    }, { operation: 'searchDeepFacts', query, limit });
   }
 
   /**
@@ -308,128 +414,189 @@ export class CriticalFactsLoader {
    * @param {Object} options - Query options
    * @param {string} options.category - Filter by category
    * @param {number} options.limit - Maximum results
-   * @returns {Array<Object>} - Array of deep facts
+   * @returns {Object} { success: boolean, data?: Array, error?: Object }
    */
   getDeepFacts(options = {}) {
-    this._ensureDb();
+    return safeExecuteSync(() => {
+      this._ensureDb();
 
-    const now = new Date().toISOString();
-    let sql = `
-      SELECT * FROM critical_facts
-      WHERE tier = 'deep'
-        AND (expires_at IS NULL OR expires_at > @now)
-    `;
+      const now = new Date().toISOString();
+      let sql = `
+        SELECT * FROM critical_facts
+        WHERE tier = 'deep'
+          AND (expires_at IS NULL OR expires_at > @now)
+      `;
 
-    const params = { now };
+      const params = { now };
 
-    if (options.category) {
-      sql += ' AND category = @category';
-      params.category = options.category;
-    }
+      if (options.category) {
+        sql += ' AND category = @category';
+        params.category = options.category;
+      }
 
-    sql += ' ORDER BY updated_at DESC';
+      sql += ' ORDER BY updated_at DESC';
 
-    if (options.limit) {
-      sql += ' LIMIT @limit';
-      params.limit = options.limit;
-    }
+      if (options.limit) {
+        if (typeof options.limit !== 'number' || options.limit < 1) {
+          throw ValidationError.invalid('options.limit', options.limit, 'positive number');
+        }
+        sql += ' LIMIT @limit';
+        params.limit = options.limit;
+      }
 
-    const stmt = this.db.prepare(sql);
-    const rows = stmt.all(params);
-
-    return rows.map(row => this._rowToFact(row));
+      try {
+        const stmt = this.db.prepare(sql);
+        const rows = stmt.all(params);
+        
+        this.logger.debug('Retrieved deep facts', { count: rows.length, category: options.category });
+        
+        return rows.map(row => this._rowToFact(row));
+      } catch (err) {
+        throw DatabaseError.query('getDeepFacts', err, { 
+          options, 
+          correlationId: this.correlationId 
+        });
+      }
+    }, { operation: 'getDeepFacts', options });
   }
 
   /**
    * Get expired facts for cleanup
-   * @returns {Array<Object>} - Array of expired facts
+   * @returns {Object} { success: boolean, data?: Array, error?: Object }
    */
   getExpiredFacts() {
-    this._ensureDb();
+    return safeExecuteSync(() => {
+      this._ensureDb();
 
-    const now = new Date().toISOString();
-    const sql = `
-      SELECT * FROM critical_facts
-      WHERE expires_at IS NOT NULL AND expires_at < @now
-    `;
+      const now = new Date().toISOString();
+      const sql = `
+        SELECT * FROM critical_facts
+        WHERE expires_at IS NOT NULL AND expires_at < @now
+      `;
 
-    const stmt = this.db.prepare(sql);
-    const rows = stmt.all({ now });
-
-    return rows.map(row => this._rowToFact(row));
+      try {
+        const stmt = this.db.prepare(sql);
+        const rows = stmt.all({ now });
+        return rows.map(row => this._rowToFact(row));
+      } catch (err) {
+        throw DatabaseError.query('getExpiredFacts', err, { correlationId: this.correlationId });
+      }
+    }, { operation: 'getExpiredFacts' });
   }
 
   /**
    * Delete expired facts
-   * @returns {number} - Number of deleted facts
+   * @returns {Object} { success: boolean, data?: number, error?: Object }
    */
   deleteExpiredFacts() {
-    this._ensureDb();
+    return safeExecuteSync(() => {
+      this._ensureDb();
 
-    const now = new Date().toISOString();
-    const sql = `
-      DELETE FROM critical_facts
-      WHERE expires_at IS NOT NULL AND expires_at < @now
-    `;
+      const now = new Date().toISOString();
+      const sql = `
+        DELETE FROM critical_facts
+        WHERE expires_at IS NOT NULL AND expires_at < @now
+      `;
 
-    const stmt = this.db.prepare(sql);
-    const result = stmt.run({ now });
-
-    if (this.verbose && result.changes > 0) {
-      console.log(`[critical-facts-loader] Deleted ${result.changes} expired facts`);
-    }
-
-    return result.changes;
+      try {
+        const stmt = this.db.prepare(sql);
+        const result = stmt.run({ now });
+        
+        if (result.changes > 0) {
+          this.logger.info('Deleted expired facts', { count: result.changes });
+        }
+        
+        return result.changes;
+      } catch (err) {
+        throw DatabaseError.query('deleteExpiredFacts', err, { correlationId: this.correlationId });
+      }
+    }, { operation: 'deleteExpiredFacts' });
   }
 
   /**
    * Get a fact by ID
    * @param {string} id - Fact ID
-   * @returns {Object|null} - Fact object or null
+   * @returns {Object} { success: boolean, data?: Object|null, error?: Object }
    */
   getFactById(id) {
-    this._ensureDb();
+    return safeExecuteSync(() => {
+      this._ensureDb();
 
-    const sql = 'SELECT * FROM critical_facts WHERE id = @id';
-    const stmt = this.db.prepare(sql);
-    const row = stmt.get({ id });
+      if (!id || typeof id !== 'string') {
+        throw ValidationError.invalid('id', id, 'non-empty string');
+      }
 
-    return row ? this._rowToFact(row) : null;
+      const sql = 'SELECT * FROM critical_facts WHERE id = @id';
+      
+      try {
+        const stmt = this.db.prepare(sql);
+        const row = stmt.get({ id });
+        
+        this.logger.debug('Retrieved fact by ID', { id, found: !!row });
+        
+        return row ? this._rowToFact(row) : null;
+      } catch (err) {
+        throw DatabaseError.query('getFactById', err, { id, correlationId: this.correlationId });
+      }
+    }, { operation: 'getFactById', id });
   }
 
   /**
    * Delete a fact by ID
    * @param {string} id - Fact ID
-   * @returns {boolean} - True if deleted
+   * @returns {Object} { success: boolean, data?: boolean, error?: Object }
    */
   deleteFact(id) {
-    this._ensureDb();
+    return safeExecuteSync(() => {
+      this._ensureDb();
 
-    const sql = 'DELETE FROM critical_facts WHERE id = @id';
-    const stmt = this.db.prepare(sql);
-    const result = stmt.run({ id });
+      if (!id || typeof id !== 'string') {
+        throw ValidationError.invalid('id', id, 'non-empty string');
+      }
 
-    return result.changes > 0;
+      const sql = 'DELETE FROM critical_facts WHERE id = @id';
+      
+      try {
+        const stmt = this.db.prepare(sql);
+        const result = stmt.run({ id });
+        
+        if (result.changes > 0) {
+          this.logger.info('Fact deleted', { id });
+        }
+        
+        return result.changes > 0;
+      } catch (err) {
+        throw DatabaseError.query('deleteFact', err, { id, correlationId: this.correlationId });
+      }
+    }, { operation: 'deleteFact', id });
   }
 
   /**
    * Load agent passport (L0 context)
-   * @returns {Promise<Object>} - Passport object
+   * @returns {Promise<Object>} { success: boolean, data?: Object, error?: Object }
    * @private
    */
   async _loadPassport() {
-    try {
+    const result = await safeExecute(async () => {
       const content = await fs.readFile(this.passportPath, 'utf-8');
       return JSON.parse(content);
-    } catch (err) {
-      if (this.verbose) {
-        console.log(`[critical-facts-loader] Could not load passport: ${err.message}`);
-      }
+    }, { operation: '_loadPassport', path: this.passportPath });
+
+    if (!result.success) {
+      this.logger.warn('Could not load passport, using defaults', { 
+        path: this.passportPath,
+        error: result.error?.message 
+      });
       return {
-        agent: { id: 'unknown', name: 'unknown' },
-        error: 'passport not found'
+        success: true,
+        data: {
+          agent: { id: 'unknown', name: 'unknown' },
+          error: 'passport not found'
+        }
       };
     }
+
+    return result;
   }
 
   /**
@@ -445,7 +612,7 @@ export class CriticalFactsLoader {
       content: {
         title: row.title,
         body: row.body,
-        tags: JSON.parse(row.tags || '[]')
+        tags: this._safeParseJSON(row.tags, [])
       },
       provenance: {
         source: row.source,
@@ -455,20 +622,28 @@ export class CriticalFactsLoader {
       },
       updated_at: row.updated_at,
       expires_at: row.expires_at,
-      relations: JSON.parse(row.relations || '[]')
+      relations: this._safeParseJSON(row.relations, [])
     };
 
     // Merge extra content fields
     if (row.content_extra && row.content_extra !== '{}') {
-      try {
-        const extra = JSON.parse(row.content_extra);
-        Object.assign(fact.content, extra);
-      } catch {
-        // Ignore parse errors
-      }
+      const extra = this._safeParseJSON(row.content_extra, {});
+      Object.assign(fact.content, extra);
     }
 
     return fact;
+  }
+
+  /**
+   * Safely parse JSON with fallback
+   * @private
+   */
+  _safeParseJSON(str, defaultValue) {
+    try {
+      return str ? JSON.parse(str) : defaultValue;
+    } catch {
+      return defaultValue;
+    }
   }
 
   /**
@@ -477,7 +652,10 @@ export class CriticalFactsLoader {
    */
   _ensureDb() {
     if (!this.db) {
-      throw new Error('Database not initialized. Call init() first.');
+      throw new PalaceError('Database not initialized. Call init() first.', {
+        code: 'DB_NOT_INITIALIZED',
+        correlationId: this.correlationId
+      });
     }
   }
 
@@ -497,78 +675,100 @@ export class CriticalFactsLoader {
    * Loads L0 (agent passport) + L1 (critical facts)
    * Target: under 900 tokens total
    *
-   * @returns {Promise<Object>} - Wake-up context object
-   * @property {Object} l0 - Agent passport (L0 context)
-   * @property {Array<Object>} l1 - Critical facts (L1 context)
-   * @property {number} tokenEstimate - Estimated token count
-   * @property {number} l1Count - Number of L1 facts loaded
-   * @property {Array<string>} expiredFactIds - IDs of expired facts found
+   * @returns {Promise<Object>} { success: boolean, data?: Object, error?: Object }
    */
   async generateWakeUpContext() {
-    // Initialize if not already done
-    if (!this.db) {
-      await this.init();
-    }
+    return safeExecute(async () => {
+      this.logger.info('Generating wake-up context');
 
-    // Load L0: Agent passport
-    const passport = await this._loadPassport();
-
-    // Compact passport for context (remove examples, etc.)
-    const compactPassport = {
-      version: passport.version,
-      agent: passport.agent,
-      capabilities: passport.capabilities,
-      hardware_profile: {
-        host: passport.hardware_profile?.host,
-        gpu: passport.hardware_profile?.gpu,
-        local_inference: passport.hardware_profile?.local_inference
-      },
-      mesh_identity: {
-        receiver_url: passport.mesh_identity?.receiver_url
+      // Initialize if not already done
+      if (!this.db) {
+        const initResult = await this.init();
+        if (!initResult.success) {
+          throw new PalaceError('Failed to initialize database for wake-up context', {
+            code: 'WAKEUP_INIT_FAILED',
+            cause: initResult.error,
+            correlationId: this.correlationId
+          });
+        }
       }
-    };
 
-    // Load L1: Critical facts
-    const criticalFacts = this.getCriticalFacts();
+      // Load L0: Agent passport
+      const passportResult = await this._loadPassport();
+      const passport = passportResult.success ? passportResult.data : { agent: { id: 'unknown', name: 'unknown' } };
 
-    // Check for expired facts
-    const expiredFacts = this.getExpiredFacts();
-    const expiredFactIds = expiredFacts.map(f => f.id);
+      // Compact passport for context (remove examples, etc.)
+      const compactPassport = {
+        version: passport.version,
+        agent: passport.agent,
+        capabilities: passport.capabilities,
+        hardware_profile: {
+          host: passport.hardware_profile?.host,
+          gpu: passport.hardware_profile?.gpu,
+          local_inference: passport.hardware_profile?.local_inference
+        },
+        mesh_identity: {
+          receiver_url: passport.mesh_identity?.receiver_url
+        }
+      };
 
-    if (expiredFacts.length > 0 && this.verbose) {
-      console.log(`[critical-facts-loader] Found ${expiredFacts.length} expired facts:`, expiredFactIds);
-    }
+      // Load L1: Critical facts
+      const factsResult = this.getCriticalFacts();
+      const criticalFacts = factsResult.success ? factsResult.data : [];
 
-    // Compact facts for context
-    const compactFacts = criticalFacts.map(fact => ({
-      id: fact.id,
-      tier: fact.tier,
-      category: fact.category,
-      title: fact.content.title,
-      body: this._truncateBody(fact.content.body, 200), // Limit body length
-      tags: fact.content.tags?.slice(0, 5) || [] // Limit tags
-    }));
+      // Check for expired facts (graceful: don't fail if this errors)
+      let expiredFactIds = [];
+      try {
+        const expiredResult = this.getExpiredFacts();
+        if (expiredResult.success) {
+          expiredFactIds = expiredResult.data.map(f => f.id);
+        }
+      } catch (err) {
+        this.logger.warn('Could not check for expired facts', { error: err.message });
+      }
 
-    // Calculate token estimate
-    const l0Tokens = this._estimateTokens(JSON.stringify(compactPassport));
-    const l1Tokens = this._estimateTokens(JSON.stringify(compactFacts));
-    const totalTokens = l0Tokens + l1Tokens;
+      if (expiredFactIds.length > 0) {
+        this.logger.info(`Found ${expiredFactIds.length} expired facts`, { ids: expiredFactIds });
+      }
 
-    // Build compact result
-    const result = {
-      l0: compactPassport,
-      l1: compactFacts.slice(0, 15), // Hard limit to stay under 900 tokens
-      l1Count: criticalFacts.length,
-      l1Truncated: criticalFacts.length > 15,
-      tokenEstimate: totalTokens,
-      expiredFactIds: expiredFactIds,
-      generatedAt: new Date().toISOString()
-    };
+      // Compact facts for context
+      const compactFacts = criticalFacts.map(fact => ({
+        id: fact.id,
+        tier: fact.tier,
+        category: fact.category,
+        title: fact.content.title,
+        body: this._truncateBody(fact.content.body, 200), // Limit body length
+        tags: fact.content.tags?.slice(0, 5) || [] // Limit tags
+      }));
 
-    // Final estimate with result structure overhead
-    result.tokenEstimate = this._estimateTokens(JSON.stringify(result));
+      // Calculate token estimate
+      const l0Tokens = this._estimateTokens(JSON.stringify(compactPassport));
+      const l1Tokens = this._estimateTokens(JSON.stringify(compactFacts));
+      const totalTokens = l0Tokens + l1Tokens;
 
-    return result;
+      // Build compact result
+      const result = {
+        l0: compactPassport,
+        l1: compactFacts.slice(0, 15), // Hard limit to stay under 900 tokens
+        l1Count: criticalFacts.length,
+        l1Truncated: criticalFacts.length > 15,
+        tokenEstimate: totalTokens,
+        expiredFactIds: expiredFactIds,
+        generatedAt: new Date().toISOString(),
+        correlationId: this.correlationId
+      };
+
+      // Final estimate with result structure overhead
+      result.tokenEstimate = this._estimateTokens(JSON.stringify(result));
+
+      this.logger.info('Wake-up context generated', { 
+        l1Count: result.l1Count, 
+        tokenEstimate: result.tokenEstimate,
+        expiredCount: expiredFactIds.length
+      });
+
+      return result;
+    }, { operation: 'generateWakeUpContext' });
   }
 
   /**
@@ -588,7 +788,13 @@ export class CriticalFactsLoader {
  */
 export async function createLoader(options = {}) {
   const loader = new CriticalFactsLoader(options);
-  await loader.init();
+  const result = await loader.init();
+  if (!result.success) {
+    throw new PalaceError('Failed to create loader', {
+      code: 'LOADER_CREATE_FAILED',
+      cause: result.error
+    });
+  }
   return loader;
 }
 
@@ -599,13 +805,28 @@ export async function createLoader(options = {}) {
  * @param {Object} options - Configuration options
  * @param {string} options.dbPath - Path to SQLite database
  * @param {string} options.passportPath - Path to agent-passport.json
- * @returns {Promise<Object>} - Wake-up context
+ * @returns {Promise<Object>} Wake-up context or error object
  */
 export async function quickLoad(options = {}) {
-  const loader = await createLoader(options);
-  const context = await loader.generateWakeUpContext();
-  loader.close();
-  return context;
+  let loader;
+  try {
+    loader = await createLoader(options);
+    const result = await loader.generateWakeUpContext();
+    return result.success ? result.data : result;
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof PalaceError ? err.toResponse().error : {
+        code: 'QUICKLOAD_FAILED',
+        message: err.message,
+        correlationId: generateCorrelationId()
+      }
+    };
+  } finally {
+    if (loader) {
+      loader.close();
+    }
+  }
 }
 
 // Default export

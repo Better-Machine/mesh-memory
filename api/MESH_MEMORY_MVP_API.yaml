@@ -1,0 +1,1077 @@
+openapi: 3.0.3
+info:
+  title: Mesh-Memory MVP API
+  description: |
+    Production-grade API for persistent cross-session agent memory.
+    
+    ## Core Principles
+    
+    1. **Durability over speed**: Writes ack only after fsync to physical storage
+    2. **Strong identity**: Tokens are cryptographically bound to agent identity
+    3. **Explicit consistency**: Clients choose strong vs eventual consistency
+    4. **Idempotent operations**: Same receipt = duplicate, not error
+    5. **Observable health**: Storage layer health is verified, not assumed
+    
+    ## Authentication
+    
+    All endpoints (except `/health`) require Bearer token authentication:
+    ```
+    Authorization: Bearer {token}
+    ```
+    
+    Tokens are JWT-like structured tokens containing:
+    - `sub`: Agent ID (e.g., "liz", "ray", "woodhouse")
+    - `iss`: Issuer (mesh-memory node)
+    - `iat`: Issued at timestamp
+    - `exp`: Expiration (max 24h)
+    - `kid`: Key ID for signature verification
+    
+    ## Consistency Model
+    
+    | Level | Behavior | Use Case |
+    |-------|----------|----------|
+    | `eventual` (default) | Read from local view immediately | High throughput, can tolerate stale reads |
+    | `strong` | Wait for all pending writes to sync | Critical reads requiring freshness |
+    
+    Specify via query parameter: `?consistency=strong`
+    
+    ## Retry Contract
+    
+    | Status | Behavior | Retry Strategy |
+    |--------|----------|----------------|
+    | 429 | Rate limited | Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1.6s |
+    | 503 | Service unavailable | Exponential backoff with jitter, max 30s |
+    | 5xx | Server error | Linear backoff: 1s, 2s, 3s, 5s, then fail |
+    | 409 | Conflict | Immediate retry with merged payload |
+    
+    ## Mesh Topology
+    
+    Current mesh: 3 nodes (Liz .23, Ray .22, Woodhouse .24)
+    All nodes are equal peers; no leader election.
+  version: 1.0.0-mvp
+  contact:
+    name: Better Machine
+    url: https://bettermachine.ai
+
+servers:
+  - url: http://{node-ip}:18803
+    description: Mesh-Memory receiver node
+    variables:
+      node-ip:
+        default: 192.168.50.23
+        enum:
+          - 192.168.50.23
+          - 192.168.50.22
+          - 192.168.50.24
+        description: IP address of the mesh node
+
+paths:
+  # ============================================================
+  # HEALTH ENDPOINTS
+  # ============================================================
+  
+  /health:
+    get:
+      summary: Liveness and storage health check
+      description: |
+        Verifies the receiver is operational AND the storage layer is accessible.
+        
+        **Checks performed:**
+        1. Process is responsive
+        2. Storage directory is accessible (read/write test)
+        3. Disk has available space (>100MB)
+        4. Last checkpoint time is recent (<5 minutes)
+        
+        **Failure modes:**
+        - Disk full: Returns 503 with `storage: "disk_full"`
+        - Permission denied: Returns 503 with `storage: "permission_denied"`
+        - Storage unreachable: Returns 503 with `storage: "unreachable"`
+      operationId: healthCheck
+      security: []  # No auth required for health
+      responses:
+        '200':
+          description: Service healthy and storage operational
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+                agentId: liz
+                storage:
+                  state: ok
+                  path: /home/erik-ross/.openclaw/workspace/memory/mesh
+                  availableBytes: 45673289123
+                  lastCheckpoint: "2026-04-11T20:43:00Z"
+                  checkpointLagMs: 234
+                version: "1.0.0-mvp"
+                timestamp: "2026-04-11T20:43:00Z"
+        '503':
+          description: Service degraded or storage issues
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              examples:
+                diskFull:
+                  summary: Disk full
+                  value:
+                    status: degraded
+                    agentId: liz
+                    storage:
+                      state: disk_full
+                      path: /home/erik-ross/.openclaw/workspace/memory/mesh
+                      availableBytes: 0
+                    error: "Storage exhausted: 0 bytes available"
+                    timestamp: "2026-04-11T20:43:00Z"
+                permissionDenied:
+                  summary: Permission denied
+                  value:
+                    status: degraded
+                    agentId: liz
+                    storage:
+                      state: permission_denied
+                      path: /home/erik-ross/.openclaw/workspace/memory/mesh
+                    error: "Cannot write to storage: permission denied"
+                    timestamp: "2026-04-11T20:43:00Z"
+  
+  /health/ready:
+    get:
+      summary: Readiness check for orchestrators
+      description: |
+        Kubernetes-style readiness probe. Returns 200 only when fully initialized
+        and ready to accept traffic.
+      operationId: readinessCheck
+      security: []
+      responses:
+        '200':
+          description: Ready to accept traffic
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready:
+                    type: boolean
+                    example: true
+                  timestamp:
+                    type: string
+                    format: date-time
+        '503':
+          description: Not ready (starting up or shutting down)
+  
+  # ============================================================
+  # WRITE ENDPOINTS
+  # ============================================================
+  
+  /v1/memory:
+    post:
+      summary: Write a memory entry
+      description: |
+        Persist a memory entry to the mesh. The write is acknowledged only after:
+        1. Entry is validated
+        2. Entry is fsync'd to physical storage
+        3. Write receipt is generated
+        
+        **Idempotency:**
+        If the same entry (same `idempotencyKey`) is sent multiple times,
+        all requests receive the same receipt. The entry is written only once.
+        
+        **Identity Binding:**
+        The `agentId` in the request body MUST match the token's `sub` claim.
+        Attempting to write as another agent returns 403.
+        
+        **Receipt Guarantees:**
+        - `receiptId`: Cryptographically unique per entry
+        - `timestamp`: Wall-clock time of fsync completion
+        - `checksum`: SHA-256 of canonicalized entry JSON
+        - `confirmedNodes`: List of nodes that have durably stored this entry
+      operationId: writeMemory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryEntry'
+            examples:
+              simple:
+                summary: Simple memory entry
+                value:
+                  agentId: liz
+                  role: assistant
+                  content: "User prefers concise responses"
+                  timestamp: "2026-04-11T20:43:00Z"
+                  idempotencyKey: "liz-2026-04-11-pref-001"
+              tagged:
+                summary: Tagged lesson entry
+                value:
+                  agentId: liz
+                  role: assistant
+                  content: "Always validate JWT signatures before trusting claims"
+                  timestamp: "2026-04-11T20:43:00Z"
+                  tags: ["lesson", "security"]
+                  idempotencyKey: "liz-2026-04-11-lesson-001"
+                  priority: high
+      responses:
+        '201':
+          description: Entry created successfully
+          headers:
+            X-Write-Receipt:
+              description: Write receipt ID for confirmation
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WriteReceipt'
+              example:
+                receiptId: "rec_2v8d9f3a7e1b5c6d"
+                entryId: "ent_a4f2c8d1e3b9a7f5"
+                timestamp: "2026-04-11T20:43:00.234Z"
+                checksum: "a3f5c8d2e1b7a9f4c6d3e8b1a2f5c7d9"
+                confirmedNodes: ["liz", "ray"]
+                durability: "fsync_confirmed"
+        '200':
+          description: Duplicate entry (already exists, idempotent)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WriteReceipt'
+              example:
+                receiptId: "rec_2v8d9f3a7e1b5c6d"
+                entryId: "ent_a4f2c8d1e3b9a7f5"
+                timestamp: "2026-04-11T20:43:00.234Z"
+                checksum: "a3f5c8d2e1b7a9f4c6d3e8b1a2f5c7d9"
+                confirmedNodes: ["liz", "ray"]
+                durability: "fsync_confirmed"
+                duplicate: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Identity mismatch - token cannot write as requested agentId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "identity_mismatch"
+                message: "Token for 'liz' cannot write entry for 'ray'"
+                code: "AUTH_IDENTITY_MISMATCH"
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Storage unavailable - entry not persisted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "storage_unavailable"
+                message: "Cannot persist entry: disk full"
+                retryAfter: 60
+  
+  /v1/memory/batch:
+    post:
+      summary: Batch write multiple memory entries
+      description: |
+        Atomically write multiple entries. Either all succeed or none.
+        Each entry receives its own receipt. The batch receives a batch receipt.
+        
+        **Limits:**
+        - Max 100 entries per batch
+        - Max 1MB total payload size
+      operationId: batchWriteMemory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entries]
+              properties:
+                entries:
+                  type: array
+                  maxItems: 100
+                  items:
+                    $ref: '#/components/schemas/MemoryEntry'
+                atomic:
+                  type: boolean
+                  default: true
+                  description: If true, all-or-nothing write
+      responses:
+        '201':
+          description: All entries created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  batchReceipt:
+                    type: string
+                  entries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WriteReceipt'
+        '207':
+          description: Partial success (only if atomic=false)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  successful:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WriteReceipt'
+                  failed:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        index:
+                          type: integer
+                        error:
+                          $ref: '#/components/schemas/Error'
+  
+  # ============================================================
+  # READ ENDPOINTS
+  # ============================================================
+  
+  /v1/memory:
+    get:
+      summary: Query memory entries
+      description: |
+        Retrieve memory entries with filtering and pagination.
+        
+        **Consistency Options:**
+        - `?consistency=eventual` (default): Read from local view immediately
+        - `?consistency=strong`: Wait for all pending writes to replicate
+        
+        **Strong Consistency Details:**
+        When `consistency=strong`, the server will:
+        1. Flush any pending local writes
+        2. Wait for sync with peers (up to 5s timeout)
+        3. Return unified view
+        
+        **Pagination:**
+        - Cursor-based using `nextCursor`
+        - Default page size: 50 entries
+        - Max page size: 500 entries
+      operationId: queryMemory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: agentId
+          in: query
+          schema:
+            type: string
+          description: Filter by originating agent
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [user, assistant, system]
+          description: Filter by role
+        - name: tags
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: false
+          description: Filter by tags (comma-separated)
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Entries after this timestamp
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Entries before this timestamp
+        - name: consistency
+          in: query
+          schema:
+            type: string
+            enum: [eventual, strong]
+            default: eventual
+          description: Consistency level
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor from previous response
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+          description: Entries per page
+      responses:
+        '200':
+          description: Query results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryQueryResult'
+              example:
+                entries:
+                  - entryId: "ent_a4f2c8d1e3b9a7f5"
+                    agentId: liz
+                    role: assistant
+                    content: "User prefers concise responses"
+                    timestamp: "2026-04-11T20:43:00Z"
+                    tags: ["preference"]
+                    receiptId: "rec_2v8d9f3a7e1b5c6d"
+                    checksum: "a3f5c8d2e1b7a9f4c6d3e8b1a2f5c7d9"
+                nextCursor: "eyJ0aW1lc3RhbXAiOiIyMDI2LTA0LTExVDIwOjAwOjAwWiJ9"
+                hasMore: true
+                totalCount: 247
+                consistency: "eventual"
+                queryTimeMs: 12
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  
+  /v1/memory/{entryId}:
+    get:
+      summary: Get a specific memory entry
+      description: Retrieve a single entry by its unique ID.
+      operationId: getMemoryEntry
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: entryId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: consistency
+          in: query
+          schema:
+            type: string
+            enum: [eventual, strong]
+            default: eventual
+      responses:
+        '200':
+          description: Entry found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryEntryWithReceipt'
+        '404':
+          description: Entry not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  
+  # ============================================================
+  # SYNC ENDPOINTS
+  # ============================================================
+  
+  /v1/sync:
+    post:
+      summary: Initiate sync with peer nodes
+      description: |
+        Request synchronization of entries from peer nodes.
+        Used for catch-up after restart or partition recovery.
+        
+        **Conflict Resolution:**
+        - Same receipt ID = same entry (no conflict)
+        - Different content, same timestamp = deterministic hash wins
+        - Concurrent updates = vector clock comparison, then tiebreaker
+        
+        **Conflict Resolution Policy:**
+        1. Compare receipt timestamps (earlier wins)
+        2. If same, compare agentId lexicographically
+        3. Never lose data: conflicting entries both kept with conflict markers
+      operationId: initiateSync
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncRequest'
+            example:
+              since: "2026-04-10T00:00:00Z"
+              cursor: "eyJsYXN0U3luYyI6IjIwMjYtMDQtMTBUMDA6MDA6MDBaIn0="
+              batchSize: 100
+      responses:
+        '200':
+          description: Sync results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResult'
+              example:
+                entries:
+                  - entryId: "ent_peer_abc123"
+                    agentId: ray
+                    content: "Research on vector clocks complete"
+                    timestamp: "2026-04-11T18:30:00Z"
+                    receiptId: "rec_peer_xyz789"
+                    sourceNode: ray
+                    conflictStatus: resolved
+                nextCursor: "eyJsYXN0U3luYyI6IjIwMjYtMDQtMTFUMTk6MDA6MDBaIn0="
+                hasMore: true
+                conflicts:
+                  - entryId: "ent_conflict_001"
+                    conflictingVersions:
+                      - node: liz
+                        content: "Value A"
+                      - node: ray
+                        content: "Value B"
+                    resolution: kept_both
+        '409':
+          description: Conflict detected requiring manual resolution
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictError'
+  
+  /v1/sync/ack:
+    post:
+      summary: Acknowledge receipt of synced entries
+      description: |
+        Confirm which entries from a sync have been successfully
+        processed and stored locally. This allows peers to garbage
+        collect or advance cursors.
+      operationId: acknowledgeSync
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [syncId, receipts]
+              properties:
+                syncId:
+                  type: string
+                  description: ID from original sync response
+                receipts:
+                  type: array
+                  items:
+                    type: string
+                  description: Receipt IDs being acknowledged
+      responses:
+        '200':
+          description: Acknowledgment recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ackId:
+                    type: string
+                  acknowledgedCount:
+                    type: integer
+  
+  # ============================================================
+  # SHARED POOL ENDPOINTS
+  # ============================================================
+  
+  /v1/shared-pool:
+    post:
+      summary: Write to shared pool
+      description: |
+        Write a bias-resistant structured fact to the shared pool.
+        These entries are meant for cross-agent consensus, not ephemeral
+        session memory.
+        
+        **Blind Gate Protocol:**
+        Before reading from shared pool, agents must commit to a position
+        via `/v1/shared/gates`.
+      operationId: writeSharedPool
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SharedPoolEntry'
+      responses:
+        '201':
+          description: Entry created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  receiptId:
+                    type: string
+        '409':
+          description: Duplicate entry ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  
+  /v1/shared-pool:
+    get:
+      summary: Query shared pool entries
+      description: Retrieve bias-resistant facts from shared pool.
+      operationId: querySharedPool
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [fact, decision, lesson, bias_report]
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Shared pool entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SharedPoolEntry'
+                  nextCursor:
+                    type: string
+  
+  /v1/shared/gates:
+    post:
+      summary: Publish gate commitment
+      description: |
+        Commit to a position before reading from shared pool.
+        Part of the blind-gate protocol to prevent anchoring bias.
+      operationId: publishGate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GateCommitment'
+      responses:
+        '201':
+          description: Gate commitment published
+        '409':
+          description: Gate already exists for this agent+topic
+  
+  /v1/shared/gates/{topic}:
+    get:
+      summary: List gate commitments for topic
+      description: |
+        List all committed gates for a topic.
+        Returns committed gates only; never returns position text.
+      operationId: listGates
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: topic
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Gate commitments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GateCommitment'
+
+components:
+  # ============================================================
+  # SECURITY SCHEMES
+  # ============================================================
+  
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Agent identity token. Must contain:
+        - `sub`: Agent ID matching request body
+        - `iss`: Issuing node
+        - `iat`, `exp`: Timestamps
+        - `kid`: Key ID for verification
+  
+  # ============================================================
+  # SCHEMAS
+  # ============================================================
+  
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        agentId:
+          type: string
+        storage:
+          type: object
+          required: [state]
+          properties:
+            state:
+              type: string
+              enum: [ok, disk_full, permission_denied, unreachable]
+            path:
+              type: string
+            availableBytes:
+              type: integer
+            lastCheckpoint:
+              type: string
+              format: date-time
+            checkpointLagMs:
+              type: integer
+              description: Milliseconds since last checkpoint
+        version:
+          type: string
+        error:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    
+    MemoryEntry:
+      type: object
+      required: [agentId, role, content, timestamp]
+      properties:
+        agentId:
+          type: string
+          description: Agent that created this entry
+          example: "liz"
+        role:
+          type: string
+          enum: [user, assistant, system]
+          description: Role of the agent creating this entry
+        content:
+          type: string
+          description: The memory content
+          maxLength: 100000
+        timestamp:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        tags:
+          type: array
+          items:
+            type: string
+          description: Optional tags for categorization
+        idempotencyKey:
+          type: string
+          description: Client-generated key for idempotency
+        priority:
+          type: string
+          enum: [low, normal, high, critical]
+          default: normal
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Arbitrary metadata
+    
+    MemoryEntryWithReceipt:
+      allOf:
+        - $ref: '#/components/schemas/MemoryEntry'
+        - type: object
+          required: [entryId, receiptId, checksum]
+          properties:
+            entryId:
+              type: string
+            receiptId:
+              type: string
+            checksum:
+              type: string
+            confirmedNodes:
+              type: array
+              items:
+                type: string
+    
+    WriteReceipt:
+      type: object
+      required: [receiptId, entryId, timestamp, checksum, durability]
+      properties:
+        receiptId:
+          type: string
+          description: Unique receipt identifier
+        entryId:
+          type: string
+          description: Unique entry identifier
+        timestamp:
+          type: string
+          format: date-time
+          description: Time of fsync completion
+        checksum:
+          type: string
+          description: SHA-256 of canonicalized entry
+        confirmedNodes:
+          type: array
+          items:
+            type: string
+          description: Nodes that have durably stored this entry
+        durability:
+          type: string
+          enum: [fsync_confirmed, replicated, acknowledged]
+        duplicate:
+          type: boolean
+          description: True if this was a duplicate write
+    
+    MemoryQueryResult:
+      type: object
+      required: [entries, hasMore, consistency]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryEntryWithReceipt'
+        nextCursor:
+          type: string
+          description: Cursor for next page
+        hasMore:
+          type: boolean
+        totalCount:
+          type: integer
+          description: Total entries matching query (if available)
+        consistency:
+          type: string
+          enum: [eventual, strong]
+        queryTimeMs:
+          type: integer
+    
+    SyncRequest:
+      type: object
+      required: [since]
+      properties:
+        since:
+          type: string
+          format: date-time
+          description: Start of time range to sync
+        until:
+          type: string
+          format: date-time
+          description: End of time range to sync
+        cursor:
+          type: string
+          description: Resume from previous cursor
+        batchSize:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
+        filter:
+          type: object
+          properties:
+            agents:
+              type: array
+              items:
+                type: string
+            tags:
+              type: array
+              items:
+                type: string
+    
+    SyncResult:
+      type: object
+      required: [entries, hasMore]
+      properties:
+        entries:
+          type: array
+          items:
+            type: object
+            allOf:
+              - $ref: '#/components/schemas/MemoryEntryWithReceipt'
+              - type: object
+                properties:
+                  sourceNode:
+                    type: string
+                  conflictStatus:
+                    type: string
+                    enum: [none, detected, resolved]
+        nextCursor:
+          type: string
+        hasMore:
+          type: boolean
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConflictInfo'
+    
+    ConflictInfo:
+      type: object
+      properties:
+        entryId:
+          type: string
+        conflictingVersions:
+          type: array
+          items:
+            type: object
+            properties:
+              node:
+                type: string
+              content:
+                type: string
+              timestamp:
+                type: string
+        resolution:
+          type: string
+          enum: [kept_first, kept_both, merged, manual_required]
+    
+    ConflictError:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "sync_conflict"
+        message:
+          type: string
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConflictInfo'
+    
+    SharedPoolEntry:
+      type: object
+      required: [id, type, agentId, content, timestamp, vectorClock]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [fact, decision, lesson, bias_report]
+        agentId:
+          type: string
+        content:
+          type: object
+          description: Structured content
+        timestamp:
+          type: string
+          format: date-time
+        vectorClock:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Lamport timestamps per node
+        decayFactor:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Temporal decay for relevance
+        blindGateHash:
+          type: string
+          description: Hash of gate commitment (if applicable)
+    
+    GateCommitment:
+      type: object
+      required: [topic, agentId, positionHash, token]
+      properties:
+        topic:
+          type: string
+          description: Topic being discussed
+        agentId:
+          type: string
+        positionHash:
+          type: string
+          description: Hash of agent's position (not the text)
+        token:
+          type: string
+          description: Unique token for this commitment
+        expiresAt:
+          type: string
+          format: date-time
+          description: Gate expiration (default 10 min)
+    
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code
+        message:
+          type: string
+          description: Human-readable error description
+        code:
+          type: string
+          description: Specific error code
+        retryAfter:
+          type: integer
+          description: Seconds to wait before retry
+        details:
+          type: object
+          description: Additional error context
+  
+  # ============================================================
+  # RESPONSES
+  # ============================================================
+  
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            validationError:
+              summary: Validation error
+              value:
+                error: "validation_failed"
+                message: "Missing required field: content"
+                code: "VALIDATION_ERROR"
+                details:
+                  field: "content"
+    
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "rate_limited"
+            message: "Too many requests. Please retry after 60 seconds."
+            retryAfter: 60
+    
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "unauthorized"
+            message: "Valid Bearer token required"
+            code: "AUTH_REQUIRED"

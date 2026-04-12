@@ -67,12 +67,36 @@ const REQUIRED_PROVENANCE_FIELDS = [
 ];
 
 // ── Logging ──────────────────────────────────────────────────────────────────
+
+/**
+ * Sanitizes metadata to remove sensitive fields before logging.
+ * Redacts tokens, passwords, secrets, and authorization headers.
+ * @param {Object} meta - Metadata object
+ * @returns {Object} Sanitized copy
+ */
+function sanitizeMeta(meta) {
+  if (!meta || typeof meta !== "object") return meta;
+  const SENSITIVE_KEYS = /token|password|secret|key|authorization|credential|auth/i;
+  const sanitized = {};
+  for (const [key, value] of Object.entries(meta)) {
+    if (SENSITIVE_KEYS.test(key)) {
+      sanitized[key] = "[REDACTED]";
+    } else if (typeof value === "object" && value !== null) {
+      sanitized[key] = sanitizeMeta(value);
+    } else {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
 async function logTunnel(level, message, meta = {}) {
   const timestamp = new Date().toISOString();
-  const entry = `[${timestamp}] [${level}] ${message}${Object.keys(meta).length ? " " + JSON.stringify(meta) : ""}\n`;
+  const sanitizedMeta = sanitizeMeta(meta);
+  const entry = `[${timestamp}] [${level}] ${message}${Object.keys(sanitizedMeta).length ? " " + JSON.stringify(sanitizedMeta) : ""}\n`;
   await mkdir(TUNNEL_DIR, { recursive: true });
   await appendFile(LOG_FILE, entry, "utf-8");
-  console.log(`[tunnel] ${level}: ${message}`, meta);
+  console.log(`[tunnel] ${level}: ${message}`, sanitizedMeta);
 }
 
 // ── Queue Management ─────────────────────────────────────────────────────────
