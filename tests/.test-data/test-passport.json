@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "agent": {
+    "id": "test-agent",
+    "name": "Test Agent"
+  },
+  "capabilities": [
+    "test"
+  ],
+  "hardware_profile": {
+    "host": "localhost",
+    "gpu": null,
+    "local_inference": false
+  },
+  "mesh_identity": {
+    "receiver_url": "http://localhost:18803"
+  }
+}

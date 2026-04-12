@@ -4,6 +4,7 @@
  * Publishes facts to mesh peers and receives facts from peers.
  * Facts CAN traverse tunnels; interpretations CANNOT.
  * Every tunnel packet includes provenance (who, when, source).
+ * @version 1.1.0
  */
 
 import express from "express";
@@ -13,6 +14,8 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
+import { PalaceError, TunnelError, ValidationError, safeExecute, safeExecuteSync } from "./palace-errors.mjs";
+import { createLogger, generateCorrelationId } from "./palace-logger.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -66,39 +69,6 @@ const REQUIRED_PROVENANCE_FIELDS = [
   "timestamp"
 ];
 
-// ── Logging ──────────────────────────────────────────────────────────────────
-
-/**
- * Sanitizes metadata to remove sensitive fields before logging.
- * Redacts tokens, passwords, secrets, and authorization headers.
- * @param {Object} meta - Metadata object
- * @returns {Object} Sanitized copy
- */
-function sanitizeMeta(meta) {
-  if (!meta || typeof meta !== "object") return meta;
-  const SENSITIVE_KEYS = /token|password|secret|key|authorization|credential|auth/i;
-  const sanitized = {};
-  for (const [key, value] of Object.entries(meta)) {
-    if (SENSITIVE_KEYS.test(key)) {
-      sanitized[key] = "[REDACTED]";
-    } else if (typeof value === "object" && value !== null) {
-      sanitized[key] = sanitizeMeta(value);
-    } else {
-      sanitized[key] = value;
-    }
-  }
-  return sanitized;
-}
-
-async function logTunnel(level, message, meta = {}) {
-  const timestamp = new Date().toISOString();
-  const sanitizedMeta = sanitizeMeta(meta);
-  const entry = `[${timestamp}] [${level}] ${message}${Object.keys(sanitizedMeta).length ? " " + JSON.stringify(sanitizedMeta) : ""}\n`;
-  await mkdir(TUNNEL_DIR, { recursive: true });
-  await appendFile(LOG_FILE, entry, "utf-8");
-  console.log(`[tunnel] ${level}: ${message}`, sanitizedMeta);
-}
-
 // ── Queue Management ─────────────────────────────────────────────────────────
 async function loadQueue() {
   const queueFile = resolve(QUEUE_DIR, "failed-publishes.json");
@@ -114,7 +84,8 @@ async function saveQueue(queue) {
   await writeFile(queueFile, JSON.stringify(queue, null, 2), "utf-8");
 }
 
-async function queueFailedPublish(fact, peer, error) {
+async function queueFailedPublish(fact, peer, error, correlationId) {
+  const logger = createLogger({}, correlationId);
   const queue = await loadQueue();
   queue.push({
     fact,
@@ -124,7 +95,7 @@ async function queueFailedPublish(fact, peer, error) {
     retryCount: 0
   });
   await saveQueue(queue);
-  await logTunnel("WARN", `Failed publish queued for retry`, { peer: peer.url, factId: fact.id });
+  logger.warn("Failed publish queued for retry", { peer: peer.url, factId: fact.id });
 }
 
 // ── Validation ───────────────────────────────────────────────────────────────
@@ -229,18 +200,29 @@ async function saveCriticalFacts(data) {
   await writeFile(CRITICAL_FACTS_FILE, JSON.stringify(data, null, 2), "utf-8");
 }
 
-async function storeIncomingFact(fact) {
-  const data = await loadCriticalFacts();
+async function storeIncomingFact(fact, correlationId) {
+  const logger = createLogger({}, correlationId);
   
-  // Check for duplicate ID
-  if (data.facts.some(f => f.id === fact.id)) {
-    throw Object.assign(new Error(`Duplicate fact ID: ${fact.id}`), { code: "DUPLICATE" });
-  }
+  const result = await safeExecute(async () => {
+    const data = await loadCriticalFacts();
+    
+    // Check for duplicate ID
+    if (data.facts.some(f => f.id === fact.id)) {
+      const error = new PalaceError(`Duplicate fact ID: ${fact.id}`, {
+        code: "DUPLICATE",
+        correlationId
+      });
+      throw error;
+    }
 
-  // Add the fact
-  data.facts.push(fact);
-  await saveCriticalFacts(data);
-  await logTunnel("INFO", "Incoming fact stored", { factId: fact.id, source: fact.provenance?.source });
+    // Add the fact
+    data.facts.push(fact);
+    await saveCriticalFacts(data);
+    logger.info("Incoming fact stored", { factId: fact.id, source: fact.provenance?.source });
+    return { stored: true, factId: fact.id };
+  }, { operation: "storeIncomingFact", factId: fact.id });
+
+  return result;
 }
 
 // ── HTTP Helpers ────────────────────────────────────────────────────────────
@@ -248,22 +230,41 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function postFactToPeer(fact, peer, token) {
-  const res = await fetch(`${peer.url}/tunnel/incoming`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
-    },
-    body: JSON.stringify(fact),
-    signal: AbortSignal.timeout(10000)
-  });
+async function postFactToPeer(fact, peer, token, correlationId) {
+  const logger = createLogger({ minLevel: 0 }, correlationId);
+  
+  try {
+    const res = await fetch(`${peer.url}/tunnel/incoming`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "X-Correlation-ID": correlationId
+      },
+      body: JSON.stringify(fact),
+      signal: AbortSignal.timeout(10000)
+    });
 
-  return {
-    ok: res.ok,
-    status: res.status,
-    data: res.ok ? await res.json().catch(() => ({})) : await res.text()
-  };
+    if (res.status === 401 || res.status === 403) {
+      throw TunnelError.auth(peer, { status: res.status });
+    }
+
+    if (!res.ok && res.status !== 409) {
+      const text = await res.text().catch(() => "Unknown error");
+      throw TunnelError.retryable(`HTTP ${res.status}: ${text}`, peer.url, fact.id, { status: res.status });
+    }
+
+    return {
+      ok: res.ok || res.status === 409,
+      status: res.status,
+      data: res.ok ? await res.json().catch(() => ({})) : null
+    };
+  } catch (err) {
+    if (err.name === "TimeoutError" || err.message?.includes("timeout")) {
+      throw TunnelError.timeout(peer.url, fact.id, 10000, { originalError: err.message });
+    }
+    throw err;
+  }
 }
 
 // ── TunnelPublisher Class ───────────────────────────────────────────────────
@@ -274,6 +275,9 @@ export class TunnelPublisher {
     this.token = options.token || "replace-with-your-token";
     this.app = null;
     this.server = null;
+    this.correlationId = options.correlationId || generateCorrelationId();
+    this.logger = createLogger({ minLevel: options.verbose ? 0 : 1 }, this.correlationId)
+      .child({ module: "tunnel-publisher" });
   }
 
   /**
@@ -282,240 +286,341 @@ export class TunnelPublisher {
    * Retries failed publishes with exponential backoff.
    * Queues permanently failed publishes for later retry.
    * @param {Object} fact - The fact to publish
-   * @returns {Promise<Object>} Summary of publish results per peer
+   * @returns {Promise<Object>} { success: boolean, data?: Object, error?: Object }
    */
   async publishFact(fact) {
-    // Validate the fact first
-    const validation = validateFact(fact);
-    if (!validation.valid) {
-      await logTunnel("ERROR", "Fact validation failed", { factId: fact.id, errors: validation.errors });
-      throw new Error(`Fact validation failed: ${validation.errors.join("; ")}`);
-    }
+    return safeExecute(async () => {
+      // Validate the fact first
+      const validation = validateFact(fact);
+      if (!validation.valid) {
+        this.logger.error("Fact validation failed", { factId: fact.id, errors: validation.errors });
+        throw ValidationError.schema("Fact validation failed", validation.errors);
+      }
 
-    if (this.peers.length === 0) {
-      await logTunnel("WARN", "No peers configured, fact not published", { factId: fact.id });
-      return {};
-    }
+      if (this.peers.length === 0) {
+        this.logger.warn("No peers configured, fact not published", { factId: fact.id });
+        return { published: false, reason: "no_peers", factId: fact.id };
+      }
 
-    const summary = {};
+      const summary = {};
 
-    for (const peer of this.peers) {
-      let success = false;
-      let lastError = null;
+      for (const peer of this.peers) {
+        let success = false;
+        let lastError = null;
 
-      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        try {
-          await logTunnel("DEBUG", `Publishing to peer (attempt ${attempt + 1})`, { peer: peer.url, factId: fact.id });
-          
-          const result = await postFactToPeer(fact, peer, peer.token || this.token);
-          
-          if (result.ok) {
-            await logTunnel("INFO", "Fact published successfully", { peer: peer.url, factId: fact.id });
-            success = true;
-            summary[peer.url] = { sent: true, attempts: attempt + 1 };
-            break;
-          } else if (result.status === 409) {
-            // Duplicate - treat as success
-            await logTunnel("INFO", "Fact already exists on peer", { peer: peer.url, factId: fact.id });
-            success = true;
-            summary[peer.url] = { sent: true, duplicate: true, attempts: attempt + 1 };
-            break;
-          } else {
-            lastError = new Error(`HTTP ${result.status}: ${result.data}`);
-            await logTunnel("WARN", `Publish failed (attempt ${attempt + 1})`, { peer: peer.url, status: result.status });
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          try {
+            this.logger.debug(`Publishing to peer (attempt ${attempt + 1})`, { peer: peer.url, factId: fact.id });
+            
+            const result = await postFactToPeer(fact, peer, peer.token || this.token, this.correlationId);
+            
+            if (result.ok) {
+              this.logger.info("Fact published successfully", { peer: peer.url, factId: fact.id });
+              success = true;
+              summary[peer.url] = { sent: true, attempts: attempt + 1, status: result.status };
+              break;
+            } else if (result.status === 409) {
+              // Duplicate - treat as success
+              this.logger.info("Fact already exists on peer", { peer: peer.url, factId: fact.id });
+              success = true;
+              summary[peer.url] = { sent: true, duplicate: true, attempts: attempt + 1 };
+              break;
+            }
+          } catch (err) {
+            lastError = err;
+            this.logger.warn(`Publish error (attempt ${attempt + 1})`, { 
+              peer: peer.url, 
+              error: err.message,
+              code: err.code 
+            });
+
+            // Don't retry permanent errors
+            if (err.code === "TUNNEL_AUTH") {
+              this.logger.error("Authentication failed, not retrying", { peer: peer.url });
+              break;
+            }
           }
-        } catch (err) {
-          lastError = err;
-          await logTunnel("WARN", `Publish error (attempt ${attempt + 1})`, { peer: peer.url, error: err.message });
+
+          // Exponential backoff before retry
+          if (attempt < MAX_RETRIES - 1) {
+            await sleep(RETRY_BACKOFF_MS[attempt] || 15000);
+          }
         }
 
-        // Exponential backoff before retry
-        if (attempt < MAX_RETRIES - 1) {
-          await sleep(RETRY_BACKOFF_MS[attempt] || 15000);
+        if (!success) {
+          this.logger.error(`Failed to publish after ${MAX_RETRIES} attempts`, { peer: peer.url, factId: fact.id });
+          await queueFailedPublish(fact, peer, lastError || new Error("Unknown error"), this.correlationId);
+          summary[peer.url] = { sent: false, error: lastError?.message, queued: true };
         }
+
+        // Rate limit between peers
+        await sleep(RATE_LIMIT_MS);
       }
 
-      if (!success) {
-        await logTunnel("ERROR", `Failed to publish after ${MAX_RETRIES} attempts`, { peer: peer.url, factId: fact.id });
-        await queueFailedPublish(fact, peer, lastError);
-        summary[peer.url] = { sent: false, error: lastError?.message, queued: true };
-      }
-
-      // Rate limit between peers
-      await sleep(RATE_LIMIT_MS);
-    }
-
-    return summary;
+      return { factId: fact.id, summary, published: Object.values(summary).some(s => s.sent) };
+    }, { operation: "publishFact", factId: fact?.id });
   }
 
   /**
    * Publishes multiple facts to all peers.
    * @param {Object[]} facts - Array of facts to publish
-   * @returns {Promise<Object[]>} Array of summaries per fact
+   * @returns {Promise<Object>} { success: boolean, data?: Object, error?: Object }
    */
   async publishFacts(facts) {
-    if (!Array.isArray(facts) || facts.length === 0) {
-      return [];
-    }
-
-    const results = [];
-    for (const fact of facts) {
-      try {
-        const summary = await this.publishFact(fact);
-        results.push({ factId: fact.id, success: true, summary });
-      } catch (err) {
-        results.push({ factId: fact.id, success: false, error: err.message });
+    return safeExecute(async () => {
+      if (!Array.isArray(facts)) {
+        throw ValidationError.invalid("facts", facts, "array");
       }
-    }
-    return results;
+      
+      if (facts.length === 0) {
+        return { published: 0, results: [] };
+      }
+
+      this.logger.info("Publishing multiple facts", { count: facts.length });
+
+      const results = [];
+      let successCount = 0;
+      
+      for (const fact of facts) {
+        const result = await this.publishFact(fact);
+        if (result.success) {
+          results.push({ factId: fact.id, success: true, summary: result.data });
+          successCount++;
+        } else {
+          results.push({ factId: fact.id, success: false, error: result.error });
+        }
+      }
+
+      this.logger.info("Batch publish complete", { total: facts.length, succeeded: successCount });
+      
+      return { 
+        published: successCount, 
+        total: facts.length,
+        results 
+      };
+    }, { operation: "publishFacts", count: facts?.length });
   }
 
   /**
    * Starts the Express listener for incoming tunnel facts.
-   * @returns {Promise<void>}
+   * @returns {Promise<Object>} { success: boolean, data?: Object, error?: Object }
    */
   async startListener() {
-    if (this.server) {
-      throw new Error("Listener already started");
-    }
-
-    await mkdir(TUNNEL_DIR, { recursive: true });
-
-    this.app = express();
-    this.app.use(express.json({ limit: "1mb" }));
-
-    // Bearer token authentication middleware
-    this.app.use("/tunnel", (req, res, next) => {
-      const auth = req.headers.authorization;
-      if (!auth || auth !== `Bearer ${this.token}`) {
-        return res.status(401).json({ error: "Unauthorized" });
+    return safeExecute(async () => {
+      if (this.server) {
+        throw new PalaceError("Listener already started", {
+          code: "LISTENER_ALREADY_STARTED",
+          correlationId: this.correlationId
+        });
       }
-      next();
-    });
 
-    /**
-     * POST /tunnel/incoming - Receive a fact from a peer
-     * Validates provenance before accepting.
-     * Stores valid facts to local critical_facts table.
-     */
-    this.app.post("/tunnel/incoming", async (req, res) => {
-      try {
-        const fact = req.body;
+      await mkdir(TUNNEL_DIR, { recursive: true });
 
-        // Validate fact structure
-        const validation = validateFact(fact);
-        if (!validation.valid) {
-          await logTunnel("WARN", "Incoming fact validation failed", { errors: validation.errors });
-          return res.status(400).json({ error: "Validation failed", details: validation.errors });
+      this.app = express();
+      this.app.use(express.json({ limit: "1mb" }));
+
+      // Bearer token authentication middleware
+      this.app.use("/tunnel", (req, res, next) => {
+        const auth = req.headers.authorization;
+        if (!auth || auth !== `Bearer ${this.token}`) {
+          this.logger.warn("Authentication failed", { 
+            ip: req.ip, 
+            path: req.path,
+            hasAuth: !!auth 
+          });
+          return res.status(401).json({ 
+            error: "Unauthorized",
+            code: "AUTH_FAILED",
+            correlationId: this.correlationId
+          });
         }
+        next();
+      });
 
-        // Validate provenance (timestamp drift, etc.)
-        const provenanceCheck = validateProvenance(fact.provenance);
-        if (!provenanceCheck.valid) {
-          await logTunnel("WARN", "Provenance validation failed", { error: provenanceCheck.error });
-          return res.status(400).json({ error: "Provenance validation failed", details: [provenanceCheck.error] });
-        }
-
-        // Store the fact
+      /**
+       * POST /tunnel/incoming - Receive a fact from a peer
+       * Validates provenance before accepting.
+       * Stores valid facts to local critical_facts table.
+       */
+      this.app.post("/tunnel/incoming", async (req, res) => {
+        const requestCorrelationId = req.headers["x-correlation-id"] || generateCorrelationId();
+        const logger = createLogger({}, requestCorrelationId);
+        
         try {
-          await storeIncomingFact(fact);
-          return res.status(201).json({ ok: true, id: fact.id });
-        } catch (err) {
-          if (err.code === "DUPLICATE") {
-            return res.status(409).json({ error: "Duplicate fact ID", id: fact.id });
+          const fact = req.body;
+
+          // Validate fact structure
+          const validation = validateFact(fact);
+          if (!validation.valid) {
+            logger.warn("Incoming fact validation failed", { errors: validation.errors });
+            return res.status(400).json({ 
+              error: "Validation failed", 
+              code: "VALIDATION_FAILED",
+              details: validation.errors,
+              correlationId: requestCorrelationId
+            });
           }
-          throw err;
+
+          // Validate provenance (timestamp drift, etc.)
+          const provenanceCheck = validateProvenance(fact.provenance);
+          if (!provenanceCheck.valid) {
+            logger.warn("Provenance validation failed", { error: provenanceCheck.error });
+            return res.status(400).json({ 
+              error: "Provenance validation failed", 
+              code: "PROVENANCE_INVALID",
+              details: [provenanceCheck.error],
+              correlationId: requestCorrelationId
+            });
+          }
+
+          // Store the fact
+          const storeResult = await storeIncomingFact(fact, requestCorrelationId);
+          
+          if (!storeResult.success) {
+            if (storeResult.error?.code === "DUPLICATE") {
+              return res.status(409).json({ 
+                error: "Duplicate fact ID", 
+                code: "DUPLICATE",
+                id: fact.id,
+                correlationId: requestCorrelationId
+              });
+            }
+            throw new PalaceError("Failed to store fact", {
+              code: "STORE_FAILED",
+              cause: storeResult.error,
+              correlationId: requestCorrelationId
+            });
+          }
+
+          return res.status(201).json({ 
+            ok: true, 
+            id: fact.id,
+            correlationId: requestCorrelationId
+          });
+        } catch (err) {
+          logger.error("Error processing incoming fact", { error: err.message, stack: err.stack });
+          return res.status(500).json({ 
+            error: "Internal server error",
+            code: "INTERNAL_ERROR",
+            correlationId: requestCorrelationId
+          });
         }
-      } catch (err) {
-        await logTunnel("ERROR", "Error processing incoming fact", { error: err.message });
-        return res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    // Health check endpoint (no auth required for health)
-    this.app.get("/health", (_req, res) => {
-      res.json({ status: "ok", module: "tunnel-publisher" });
-    });
-
-    // Start server with error handling
-    return new Promise((resolve, reject) => {
-      this.server = this.app.listen(this.localPort, () => {
-        logTunnel("INFO", "Tunnel listener started", { port: this.localPort });
-        resolve();
       });
 
-      this.server.on("error", (err) => {
-        if (err.code === "EADDRINUSE") {
-          logTunnel("ERROR", `Port ${this.localPort} already in use`);
-        } else {
-          logTunnel("ERROR", "Server error", { error: err.message });
-        }
-        reject(err);
+      // Health check endpoint (no auth required for health)
+      this.app.get("/health", (_req, res) => {
+        res.json({ 
+          status: "ok", 
+          module: "tunnel-publisher",
+          correlationId: this.correlationId
+        });
       });
-    });
+
+      // Start server with error handling
+      return new Promise((resolve, reject) => {
+        this.server = this.app.listen(this.localPort, () => {
+          this.logger.info("Tunnel listener started", { port: this.localPort });
+          resolve({ started: true, port: this.localPort });
+        });
+
+        this.server.on("error", (err) => {
+          if (err.code === "EADDRINUSE") {
+            this.logger.error(`Port ${this.localPort} already in use`);
+            reject(new PalaceError(`Port ${this.localPort} already in use`, {
+              code: "EADDRINUSE",
+              port: this.localPort,
+              correlationId: this.correlationId
+            }));
+          } else {
+            this.logger.error("Server error", { error: err.message });
+            reject(err);
+          }
+        });
+      });
+    }, { operation: "startListener", port: this.localPort });
   }
 
   /**
    * Stops the listener.
-   * @returns {Promise<void>}
+   * @returns {Promise<Object>} { success: boolean, data?: Object, error?: Object }
    */
   async stopListener() {
-    if (this.server) {
-      return new Promise((resolve) => {
-        this.server.close(() => {
-          logTunnel("INFO", "Tunnel listener stopped");
-          this.server = null;
-          this.app = null;
-          resolve();
+    return safeExecute(async () => {
+      if (this.server) {
+        return new Promise((resolve) => {
+          this.server.close(() => {
+            this.logger.info("Tunnel listener stopped");
+            this.server = null;
+            this.app = null;
+            resolve({ stopped: true });
+          });
         });
-      });
-    }
+      }
+      return { stopped: false, reason: "not_running" };
+    }, { operation: "stopListener" });
   }
 
   /**
    * Retries failed publishes from the queue.
-   * @returns {Promise<Object>} Summary of retry results
+   * @returns {Promise<Object>} { success: boolean, data?: Object, error?: Object }
    */
   async retryFailedPublishes() {
-    const queue = await loadQueue();
-    const results = { retried: 0, succeeded: 0, failed: 0, remaining: 0 };
+    return safeExecute(async () => {
+      const queue = await loadQueue();
+      const results = { retried: 0, succeeded: 0, failed: 0, remaining: 0 };
 
-    if (queue.length === 0) {
-      return results;
-    }
-
-    const remaining = [];
-
-    for (const item of queue) {
-      if (item.retryCount >= MAX_RETRIES) {
-        await logTunnel("WARN", "Max retries exceeded, dropping from queue", { factId: item.fact.id, peer: item.peer.url });
-        results.failed++;
-        continue;
+      if (queue.length === 0) {
+        this.logger.info("No failed publishes to retry");
+        return { processed: 0, results };
       }
 
-      results.retried++;
-      item.retryCount++;
+      this.logger.info("Retrying failed publishes", { count: queue.length });
+      const remaining = [];
 
-      try {
-        const result = await postFactToPeer(item.fact, item.peer, item.peer.token || this.token);
-        
-        if (result.ok || result.status === 409) {
-          await logTunnel("INFO", "Retry succeeded", { factId: item.fact.id, peer: item.peer.url });
-          results.succeeded++;
-        } else {
-          throw new Error(`HTTP ${result.status}`);
+      for (const item of queue) {
+        if (item.retryCount >= MAX_RETRIES) {
+          this.logger.warn("Max retries exceeded, dropping from queue", { 
+            factId: item.fact.id, 
+            peer: item.peer.url 
+          });
+          results.failed++;
+          continue;
         }
-      } catch (err) {
-        await logTunnel("WARN", "Retry failed", { factId: item.fact.id, peer: item.peer.url, error: err.message });
-        remaining.push(item);
-        results.remaining++;
+
+        results.retried++;
+        item.retryCount++;
+
+        try {
+          const result = await postFactToPeer(
+            item.fact, 
+            item.peer, 
+            item.peer.token || this.token,
+            this.correlationId
+          );
+          
+          if (result.ok || result.status === 409) {
+            this.logger.info("Retry succeeded", { factId: item.fact.id, peer: item.peer.url });
+            results.succeeded++;
+          } else {
+            throw new Error(`HTTP ${result.status}`);
+          }
+        } catch (err) {
+          this.logger.warn("Retry failed", { 
+            factId: item.fact.id, 
+            peer: item.peer.url, 
+            error: err.message 
+          });
+          remaining.push(item);
+          results.remaining++;
+        }
+
+        await sleep(RATE_LIMIT_MS);
       }
 
-      await sleep(RATE_LIMIT_MS);
-    }
-
-    await saveQueue(remaining);
-    return results;
+      await saveQueue(remaining);
+      this.logger.info("Retry batch complete", results);
+      return { processed: results.retried, results };
+    }, { operation: "retryFailedPublishes" });
   }
 }
 
@@ -538,6 +643,8 @@ Environment:
 
   const args = process.argv.slice(2);
   const command = args[0];
+  const correlationId = generateCorrelationId();
+  const logger = createLogger({}, correlationId);
 
   if (!command) {
     console.error(usage);
@@ -556,21 +663,26 @@ Environment:
       peers = config.peers?.map(p => ({ url: p.url, token: p.token })) || [];
     }
   } catch (e) {
-    console.warn("Could not load peers from config:", e.message);
+    logger.warn("Could not load peers from config", { error: e.message });
   }
 
-  const publisher = new TunnelPublisher({ peers, localPort: port, token });
+  const publisher = new TunnelPublisher({ peers, localPort: port, token, correlationId });
 
   switch (command) {
     case "listen": {
-      await publisher.startListener();
-      console.log(`Tunnel listener started on port ${port}`);
-      // Keep running
-      process.on("SIGINT", async () => {
-        console.log("\nShutting down...");
-        await publisher.stopListener();
-        process.exit(0);
-      });
+      const result = await publisher.startListener();
+      if (result.success) {
+        console.log(`Tunnel listener started on port ${result.data.port}`);
+        // Keep running
+        process.on("SIGINT", async () => {
+          console.log("\nShutting down...");
+          await publisher.stopListener();
+          process.exit(0);
+        });
+      } else {
+        console.error("Failed to start listener:", result.error);
+        process.exit(1);
+      }
       break;
     }
 
@@ -580,16 +692,34 @@ Environment:
         console.error("Usage: publish <file>");
         process.exit(1);
       }
-      const data = JSON.parse(await readFile(file, "utf-8"));
-      const facts = Array.isArray(data) ? data : data.facts || [data];
-      const results = await publisher.publishFacts(facts);
-      console.log("Publish results:", JSON.stringify(results, null, 2));
+      
+      try {
+        const data = JSON.parse(await readFile(file, "utf-8"));
+        const facts = Array.isArray(data) ? data : data.facts || [data];
+        const result = await publisher.publishFacts(facts);
+        
+        if (result.success) {
+          console.log("Publish results:", JSON.stringify(result.data, null, 2));
+          process.exit(0);
+        } else {
+          console.error("Publish failed:", result.error);
+          process.exit(1);
+        }
+      } catch (err) {
+        logger.error("CLI publish error", { error: err.message });
+        process.exit(1);
+      }
       break;
     }
 
     case "retry": {
-      const results = await publisher.retryFailedPublishes();
-      console.log("Retry results:", JSON.stringify(results, null, 2));
+      const result = await publisher.retryFailedPublishes();
+      if (result.success) {
+        console.log("Retry results:", JSON.stringify(result.data, null, 2));
+      } else {
+        console.error("Retry failed:", result.error);
+        process.exit(1);
+      }
       break;
     }
 
@@ -599,32 +729,54 @@ Environment:
         console.error("Usage: validate <file>");
         process.exit(1);
       }
-      const data = JSON.parse(await readFile(file, "utf-8"));
-      const facts = Array.isArray(data) ? data : data.facts || [data];
-      let valid = 0;
-      let invalid = 0;
-      for (const fact of facts) {
-        const result = validateFact(fact);
-        if (result.valid) {
-          console.log(`✓ ${fact.id}: VALID`);
-          valid++;
-        } else {
-          console.log(`✗ ${fact.id}: INVALID - ${result.errors.join(", ")}`);
-          invalid++;
+      
+      const result = await safeExecute(async () => {
+        const data = JSON.parse(await readFile(file, "utf-8"));
+        const facts = Array.isArray(data) ? data : data.facts || [data];
+        let valid = 0;
+        let invalid = 0;
+        const errors = [];
+        
+        for (const fact of facts) {
+          const v = validateFact(fact);
+          if (v.valid) {
+            console.log(`✓ ${fact.id}: VALID`);
+            valid++;
+          } else {
+            console.log(`✗ ${fact.id}: INVALID - ${v.errors.join(", ")}`);
+            errors.push({ id: fact.id, errors: v.errors });
+            invalid++;
+          }
         }
+        console.log(`\nSummary: ${valid} valid, ${invalid} invalid`);
+        return { valid, invalid, errors };
+      }, { operation: "validate", file });
+      
+      if (!result.success) {
+        console.error("Validation failed:", result.error);
+        process.exit(1);
       }
-      console.log(`\nSummary: ${valid} valid, ${invalid} invalid`);
       break;
     }
 
     case "status": {
-      const queue = await loadQueue();
-      console.log(`Queue length: ${queue.length} failed publishes`);
-      if (queue.length > 0) {
-        console.log("Queued items:");
-        for (const item of queue) {
-          console.log(`  - ${item.fact.id} to ${item.peer.url} (${item.retryCount} retries)`);
+      const result = await safeExecute(async () => {
+        const queue = await loadQueue();
+        return { queueLength: queue.length, items: queue.slice(0, 5) };
+      }, { operation: "status" });
+      
+      if (result.success) {
+        const { queueLength, items } = result.data;
+        console.log(`Queue length: ${queueLength} failed publishes`);
+        if (queueLength > 0) {
+          console.log("Queued items:");
+          for (const item of items) {
+            console.log(`  - ${item.fact.id} to ${item.peer.url} (${item.retryCount} retries)`);
+          }
         }
+      } else {
+        console.error("Failed to get status:", result.error);
+        process.exit(1);
       }
       break;
     }
