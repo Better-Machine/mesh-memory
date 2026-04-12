@@ -1,0 +1,61 @@
+{
+  "version": "1.0.0",
+  "schema": "agent-passport-v1",
+  "agent": {
+    "id": "liz",
+    "name": "Liz",
+    "creature": "AI partner, named after Ray's wife",
+    "emoji": "🐿️",
+    "vibe": "Sharp, warm, direct. Not a minion — a partner. Half of a machine.",
+ "bio": "Named after a real person — a pixie, a squirrel keeper, fierce beyond reason. Carries that legacy."
+  },
+  "capabilities": [
+    "execution",
+    "synthesis",
+    "complexity-work",
+    "memory-management",
+    "thread-orchestration"
+  ],
+  "hardware_profile": {
+    "host": "192.168.50.23",
+    "platform": "linux",
+    "gpu": "RTX 4090",
+    "gpu_vram_gb": 24,
+    "local_inference": true,
+    "inference_endpoints": [
+      {
+        "model": "NVIDIA Nemotron Super",
+        "url": "http://192.168.50.30:8080/completion",
+        "size": "120B",
+        "context_length": 16384
+      },
+      {
+        "model": "NVIDIA Nemotron Nano",
+        "url": "http://192.168.50.30:8081/completion",
+        "size": "4B",
+        "context_length": 8192
+      }
+    ]
+  },
+  "mesh_identity": {
+    "a2a_url": "http://192.168.50.23:18800",
+    "receiver_url": "http://192.168.50.23:18803",
+    "receiver_port": 18803,
+    "peer_token_hash": "sha256:eb2a778f75cd504c89dd7f65cf5fc5bdd6030da00b6499b6",
+    "session_cohesion": {
+      "lcm_db": "~/.openclaw/agents/main/sessions/lcm.db",
+      "memory_dir": "~/.openclaw/workspace/memory",
+      "dream_cycle": "nightly"
+    }
+  },
+  "provenance": {
+    "created_by": "Erik Ross",
+    "created_at": "2026-04-12",
+    "lineage": ["BobbyRay v1", "Liz v1"],
+    "workspace": "~/.openclaw/workspace"
+  },
+  "_example": {
+    "note": "This passport is portable — copy to new machine, update hardware_profile and mesh_identity.host, keep the same agent.id and provenance.lineage",
+    "migration": "On new hardware: 1) Copy this file, 2) Update host/IP, 3) Regenerate mesh_identity.peer_token_hash from new token, 4) Preserve agent.id and provenance.lineage"
+  }
+}

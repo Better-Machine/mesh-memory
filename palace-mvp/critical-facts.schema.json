@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Critical Facts Schema",
+  "description": "Structured schema for always-loaded (L1) and searchable (L2) facts in mesh-memory",
+  "version": "1.0.0",
+  "definitions": {
+    "fact": {
+      "type": "object",
+      "required": ["id", "tier", "category", "content", "provenance", "updated_at"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier, format: {category}-{descriptor}-{nnn}",
+          "example": "standing-ilhcev-001"
+        },
+        "tier": {
+          "type": "string",
+          "enum": ["critical", "deep"],
+          "description": "critical = always loaded, deep = searchable only"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["standing_instructions", "projects", "people", "infrastructure", "blockers", "events"],
+          "description": "Fact category for organization and filtering"
+        },
+        "content": {
+          "type": "object",
+          "required": ["title", "body"],
+          "properties": {
+            "title": { "type": "string" },
+            "body": { "type": "string" },
+            "tags": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "provenance": {
+          "type": "object",
+          "required": ["source", "timestamp"],
+          "properties": {
+            "source": {
+              "type": "string",
+              "description": "Origin of this fact (e.g., 'AGENTS.md', 'user-direct', 'RFC-0001')"
+            },
+            "author": {
+              "type": "string",
+              "description": "Who created/confirmed this fact"
+            },
+            "timestamp": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last modification timestamp"
+        },
+        "expires_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Optional expiration date. null = never expires"
+        },
+        "relations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "relates_to": { "type": "string" },
+              "relation_type": {
+                "type": "string",
+                "enum": ["supersedes", "depends_on", "related_to", "contradicts"]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "type": "object",
+  "required": ["schema_version", "facts"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "facts": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/fact" }
+    }
+  },
+  "examples": [
+    {
+      "id": "standing-ilhcev-001",
+      "tier": "critical",
+      "category": "standing_instructions",
+      "content": {
+        "title": "ILHCEV Problem-Solving Methodology",
+        "body": "Before any implementation: Inventory → Learn → Hypothesise → Choose → Execute → Validate. No exceptions. For group initiatives, each agent validates independently.",
+        "tags": ["methodology", "standing-instruction", "validation"]
+      },
+      "provenance": {
+        "source": "AGENTS.md",
+        "author": "Mr. Ross",
+        "timestamp": "2026-03-23T00:00:00Z"
+      },
+      "updated_at": "2026-03-23T00:00:00Z",
+      "expires_at": null
+    },
+    {
+      "id": "standing-qa-gate-001",
+      "tier": "critical",
+      "category": "standing_instructions",
+      "content": {
+        "title": "QA Gate (Mandatory Before Merge)",
+        "body": "POC: npm test passes, no hardcoded secrets, privacy scan clean. MVP: full test suite, QA_REPORT.md committed, all ADRs/RFCs filed.",
+        "tags": ["qa", "gate", "compliance"]
+      },
+      "provenance": {
+        "source": "AGENTS.md",
+        "author": "Mr. Ross",
+        "timestamp": "2026-03-21T00:00:00Z"
+      },
+      "updated_at": "2026-03-21T00:00:00Z",
+      "expires_at": null
+    },
+    {
+      "id": "project-agency-services-001",
+      "tier": "critical",
+      "category": "projects",
+      "content": {
+        "title": "Agency.services Strategic Direction",
+        "body": "Building A2A infrastructure — for agents, by agents. Product: persistent agent identity and portable memory. Build sequence: Phase 0 (mesh debt) → Phase 1 (identity) → Phase 2 (passport) → Phase 3 (registry) → Phase 4 (mesh as distribution).",
+        "tags": ["strategy", "a2a", "roadmap"],
+        "status": "active",
+        "current_phase": "Phase 1"
+      },
+      "provenance": {
+        "source": "AGENTS.md",
+        "author": "Mr. Ross",
+        "timestamp": "2026-03-31T00:00:00Z"
+      },
+      "updated_at": "2026-03-31T00:00:00Z",
+      "expires_at": null
+    },
+    {
+      "id": "people-erik-ross-001",
+      "tier": "critical",
+      "category": "people",
+      "content": {
+        "title": "Erik Ross — Primary Human",
+        "body": "Dreamer, aging technologist, founder. Building hockeyops.ai with son Felix. Embraced AI as the tool that closes the gap between vision and execution. Direct, appreciates competence, values partnership over minions.",
+        "tags": ["human", "founder", "product-owner"],
+        "relationship": "primary user and architect",
+        "preferences": ["directness", "competence", "partnership"]
+      },
+      "provenance": {
+        "source": "USER.md",
+        "author": "system",
+        "timestamp": "2026-04-12T00:00:00Z"
+      },
+      "updated_at": "2026-04-12T00:00:00Z",
+      "expires_at": null
+    },
+    {
+      "id": "infra-mesh-nodes-001",
+      "tier": "critical",
+      "category": "infrastructure",
+      "content": {
+        "title": "Mesh Node Topology",
+        "body": "Ray: 192.168.50.22 (RTX 4090), Liz: 192.168.50.23 (RTX 4090), Woodhouse: 192.168.50.24. A2A Gateway: port 18800. Mesh Receiver: port 18803. All nodes require /etc/hosts entries.",
+        "tags": ["infrastructure", "network", "mesh"],
+        "nodes": [
+          {"id": "ray", "ip": "192.168.50.22", "gpu": "RTX 4090"},
+          {"id": "liz", "ip": "192.168.50.23", "gpu": "RTX 4090"},
+          {"id": "woodhouse", "ip": "192.168.50.24", "gpu": null}
+        ]
+      },
+      "provenance": {
+        "source": "A2A_RECEIVER_SPEC.md",
+        "author": "Liz",
+        "timestamp": "2026-04-11T00:00:00Z"
+      },
+      "updated_at": "2026-04-11T00:00:00Z",
+      "expires_at": null
+    },
+    {
+      "id": "blocker-hockeyops-001",
+      "tier": "critical",
+      "category": "blockers",
+      "content": {
+        "title": "HockeyOps LLC Bank Account",
+        "body": "Felix (50% owner) needs to contribute to LLC bank account setup before Stripe and operational dependencies can be unblocked.",
+        "tags": ["blocker", "hockeyops", "banking"],
+        "status": "waiting",
+        "owner": "Felix Ross",
+        "blocking": ["Stripe setup", "operational dependencies"]
+      },
+      "provenance": {
+        "source": "USER.md",
+        "author": "system",
+        "timestamp": "2026-04-12T00:00:00Z"
+      },
+      "updated_at": "2026-04-12T00:00:00Z",
+      "expires_at": null
+    }
+  ]
+}
