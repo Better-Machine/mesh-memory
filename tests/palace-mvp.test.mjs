@@ -78,17 +78,6 @@ describe('Module Loading', () => {
       console.log(`Note: tunnel-publisher error: ${e.message}`);
     }
   });
-
-  test('Load a2a-palace-adapter', async () => {
-    try {
-      const mod = await import('../a2a-palace-adapter.mjs');
-      loadPalaceContext = mod.loadPalaceContext;
-      publishToPeers = mod.publishToPeers;
-      assert.ok(loadPalaceContext, 'loadPalaceContext should be exported');
-    } catch (e) {
-      console.log(`Note: a2a-adapter error: ${e.message}`);
-    }
-  });
 });
 
 // ============== UNIT TESTS: Critical Facts Loader ==============

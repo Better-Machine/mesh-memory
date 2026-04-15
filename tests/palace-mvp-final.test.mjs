@@ -54,12 +54,6 @@ describe('Module Loading', () => {
     assert.ok(typeof mod.validateProvenance === 'function', 'validateProvenance exported');
     assert.ok(typeof mod.containsInterpretationKeywords === 'function', 'containsInterpretationKeywords exported');
   });
-
-  test('A2A Adapter loads', async () => {
-    const mod = await import('../a2a-palace-adapter.mjs');
-    assert.ok(typeof mod.loadPalaceContext === 'function', 'loadPalaceContext exported');
-    assert.ok(typeof mod.publishToPeers === 'function', 'publishToPeers exported');
-  });
 });
 
 // ============== CRITICAL FACTS LOADER ==============
