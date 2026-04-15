@@ -15,6 +15,13 @@ import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 
+// Token validation cache
+const tokenCache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const TOKEN_SERVICE_URL = "http://localhost:18803/mesh/token/status";
+const TOKEN_RETRY_DELAY_MS = 1000; // 1 second delay for rotation retry
+const MAX_TOKEN_RETRIES = 2; // Maximum retry attempts for token validation
+
 const MESH_DIR = resolve(homedir(), ".openclaw/workspace/memory/mesh");
 const SHARED_GATES_DIR = resolve(homedir(), ".openclaw/workspace/memory/shared/gates");
 
@@ -75,26 +82,170 @@ function getFilePath(date) {
 }
 
 /**
+ * Validates token against token-service with caching
+ * @param {string} token - The token to validate
+ * @param {number} retryCount - Current retry attempt number
+ * @returns {Promise<boolean>} True if valid
+ */
+async function validateToken(token, retryCount = 0) {
+  // Check cache first
+  const cached = tokenCache.get(token);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.valid;
+  }
+
+  try {
+    const response = await fetch(TOKEN_SERVICE_URL, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      // Add timeout to prevent hanging requests
+      signal: AbortSignal.timeout(5000) // 5 second timeout
+    });
+
+    if (!response.ok) {
+      // Update cache with negative result
+      tokenCache.set(token, {
+        valid: false,
+        timestamp: Date.now(),
+      });
+      return false;
+    }
+
+    const tokenStatus = await response.json();
+    const valid = tokenStatus.isValid === true;
+    
+    // Update cache
+    tokenCache.set(token, {
+      valid,
+      timestamp: Date.now(),
+    });
+
+    // Clean old cache entries periodically
+    if (tokenCache.size > 100) {
+      const now = Date.now();
+      let cleaned = 0;
+      for (const [key, entry] of tokenCache.entries()) {
+        if (now - entry.timestamp > CACHE_TTL_MS) {
+          tokenCache.delete(key);
+          cleaned++;
+        }
+      }
+      // If still too large, remove oldest entries regardless of TTL
+      if (tokenCache.size > 150) {
+        const entries = Array.from(tokenCache.entries()).sort((a, b) => a[1].timestamp - b[1].timestamp);
+        const toRemove = entries.slice(0, tokenCache.size - 100);
+        for (const [key] of toRemove) {
+          tokenCache.delete(key);
+        }
+        cleaned += toRemove.length;
+      }
+      console.log(`[receiver] Cleaned ${cleaned} entries from token cache`);
+    }
+
+    return valid;
+  } catch (err) {
+    console.error(`[receiver] Token validation error (attempt ${retryCount + 1}):`, err.message);
+    
+    // Handle network timeouts specifically
+    if (err.name === 'TimeoutError') {
+      console.error("[receiver] Token service timeout - service may be overloaded");
+    }
+    
+    // On network error, use cached value if available, otherwise fail closed
+    if (cached) {
+      console.log("[receiver] Using cached token validation result due to service error");
+      return cached.valid;
+    }
+    
+    // If we have retries left, wait and retry (handles race conditions during rotation)
+    if (retryCount < MAX_TOKEN_RETRIES && err.name !== 'TimeoutError') {
+      console.log(`[receiver] Retrying token validation after ${TOKEN_RETRY_DELAY_MS}ms`);
+      await new Promise(resolve => setTimeout(resolve, TOKEN_RETRY_DELAY_MS));
+      return validateToken(token, retryCount + 1);
+    }
+    
+    return false;
+  }
+}
+
+/**
+ * Clears token from cache (used during rotation)
+ * @param {string} token - The token to clear
+ */
+function clearTokenFromCache(token) {
+  tokenCache.delete(token);
+  console.log("[receiver] Token removed from cache due to rotation");
+}
+
+/**
+ * Bearer token authentication middleware with token-service integration
+ * Handles token rotation gracefully with intelligent retry logic
+ */
+async function tokenAuthMiddleware(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized: Missing or malformed authorization header" });
+  }
+
+  const token = auth.slice(7); // Remove "Bearer " prefix
+  
+  // Basic token format validation
+  if (!token || token.length < 32) {
+    return res.status(401).json({ error: "Unauthorized: Invalid token format" });
+  }
+  
+  try {
+    const isValid = await validateToken(token);
+    
+    if (!isValid) {
+      // Token validation failed - this could be due to:
+      // 1. Token is actually invalid/revoked
+      // 2. Token was just rotated and we have stale cache
+      // 3. Token service is temporarily unavailable
+      
+      console.log(`[receiver] Token validation failed, checking for rotation scenario`);
+      
+      // Force cache refresh for this token
+      clearTokenFromCache(token);
+      
+      // Retry validation with fresh cache
+      const retryValid = await validateToken(token);
+      
+      if (!retryValid) {
+        // Token is genuinely invalid or service is down
+        // Log the failure for security monitoring
+        console.warn(`[receiver] Authentication failed for token: ${token.slice(0, 16)}...`);
+        return res.status(401).json({ error: "Unauthorized: Invalid or expired token" });
+      }
+      
+      console.log("[receiver] Token rotation handled successfully - cache was stale");
+    }
+    
+    // Token is valid - proceed with request
+    next();
+  } catch (err) {
+    console.error("[receiver] Auth middleware error:", err.message);
+    return res.status(500).json({ error: "Authentication service error" });
+  }
+}
+
+/**
  * Starts the memory receiver HTTP server.
  */
 async function main() {
   const config = loadConfig();
   const port = config.receiverPort;
-  const token = config.receiverToken;
 
   await mkdir(MESH_DIR, { recursive: true });
 
   const app = express();
   app.use(express.json({ limit: "1mb" }));
 
-  /** Bearer token authentication middleware */
-  app.use("/", (req, res, next) => {
-    const auth = req.headers.authorization;
-    if (!auth || auth !== `Bearer ${token}`) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-    next();
-  });
+  /** Apply token authentication middleware */
+  app.use("/", tokenAuthMiddleware);
 
   /** POST / — Receive a MemoryEvent */
   app.post("/", async (req, res) => {
@@ -260,6 +411,31 @@ async function main() {
   /** Health check — L1: omit agentId to avoid info disclosure on public probes */
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
+  });
+
+  /** POST /mesh/token/rotate — Handle token rotation notification */
+  app.post("/mesh/token/rotate", async (req, res) => {
+    try {
+      const { oldToken, newToken } = req.body || {};
+      if (!oldToken || !newToken) {
+        return res.status(400).json({ error: "Missing oldToken or newToken" });
+      }
+
+      // Clear old token from cache
+      clearTokenFromCache(oldToken);
+      
+      // Pre-cache new token as valid
+      tokenCache.set(newToken, {
+        valid: true,
+        timestamp: Date.now(),
+      });
+
+      console.log("[receiver] Token rotation processed: old token cleared, new token cached");
+      return res.status(200).json({ ok: true });
+    } catch (err) {
+      console.error("[receiver] Token rotation error:", err.message);
+      return res.status(500).json({ error: "Token rotation failed" });
+    }
   });
 
   // M7: Attach error handler for port-in-use and other listen errors

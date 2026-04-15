@@ -1,0 +1,8 @@
+{"timestamp":"2026-04-13T11:43:35.000Z","action":"created","tokenId":"dca51ee8-8a68-4507-83d8-ff583408e3c5","actor":"test-agent","details":{"agentId":"test-agent","expiresAt":1776167015000}}
+{"timestamp":"2026-04-13T11:43:35.002Z","action":"created","tokenId":"a1980b4f-e399-4384-83d6-1c05ebe6dd5c","actor":"test-agent","details":{"agentId":"test-agent","expiresAt":1776167015002}}
+{"timestamp":"2026-04-13T11:43:35.002Z","action":"revoked","tokenId":"a1980b4f-e399-4384-83d6-1c05ebe6dd5c","actor":"test-agent","details":{"reason":"security"}}
+{"timestamp":"2026-04-13T11:43:35.003Z","action":"created","tokenId":"a1a786dc-061c-46de-a89d-4eca685507e1","actor":"test-agent","details":{"agentId":"test-agent","expiresAt":1776167015003}}
+{"timestamp":"2026-04-13T11:43:35.004Z","action":"rotated","tokenId":"27e6a060-289f-41aa-8236-83ed8d2a6d8f","actor":"test-agent","details":{"previousTokenId":"a1a786dc-061c-46de-a89d-4eca685507e1","agentId":"test-agent"}}
+{"timestamp":"2026-04-13T11:43:35.004Z","action":"access_denied","tokenId":"unknown","actor":"test-agent","details":{"reason":"not_found"}}
+{"timestamp":"2026-04-13T11:43:35.059Z","action":"created","tokenId":"df56eb7f-27a3-44f6-86a3-f8c1d7f7549a","actor":"test-agent","details":{"agentId":"test-agent","expiresAt":1776080618659}}
+{"timestamp":"2026-04-13T11:43:40.064Z","action":"access_denied","tokenId":"df56eb7f-27a3-44f6-86a3-f8c1d7f7549a","actor":"test-agent","details":{"reason":"expired"}}

@@ -1,0 +1,309 @@
+{
+  "$schema": "https://openclaw.io/schemas/plugin-v1.json",
+  "id": "mesh-memory",
+  "name": "Mesh Memory — Multi-Agent Shared Memory System",
+  "description": "Distributed shared memory and collaboration layer for multi-agent A2A mesh with token management, queue persistence, and OpenClaw integration",
+  "version": "1.0.0",
+  "kind": ["memory", "gateway-extension"],
+  "channels": ["a2a", "memory", "system"],
+  "providers": ["mesh-memory"],
+  
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["agentId"],
+    "properties": {
+      "agentId": {
+        "type": "string",
+        "description": "Unique identifier for this agent in the mesh",
+        "enum": ["liz", "ray", "woodhouse"]
+      },
+      "receiver": {
+        "type": "object",
+        "properties": {
+          "port": { 
+            "type": "number", 
+            "default": 18803,
+            "minimum": 1024,
+            "maximum": 65535
+          },
+          "bindAddress": { 
+            "type": "string", 
+            "default": "0.0.0.0" 
+          },
+          "authToken": { 
+            "type": "string", 
+            "secret": true 
+          },
+          "maxConnections": { 
+            "type": "number", 
+            "default": 100 
+          }
+        }
+      },
+      "threadManager": {
+        "type": "object",
+        "properties": {
+          "port": { 
+            "type": "number", 
+            "default": 18802 
+          },
+          "enabled": { 
+            "type": "boolean", 
+            "default": true 
+          }
+        }
+      },
+      "peers": {
+        "type": "array",
+        "description": "Other agents in the mesh",
+        "items": {
+          "type": "object",
+          "properties": {
+            "agentId": { 
+              "type": "string",
+              "description": "Peer agent identifier"
+            },
+            "url": { 
+              "type": "string", 
+              "format": "uri",
+              "description": "Base URL for peer receiver"
+            },
+            "threadUrl": { 
+              "type": "string", 
+              "format": "uri",
+              "description": "URL for peer thread manager"
+            },
+            "token": { 
+              "type": "string", 
+              "secret": true,
+              "description": "Authentication token for peer"
+            }
+          },
+          "required": ["agentId", "url", "token"]
+        }
+      },
+      "storage": {
+        "type": "object",
+        "properties": {
+          "backend": { 
+            "type": "string", 
+            "enum": ["local", "mem0"], 
+            "default": "local" 
+          },
+          "meshPath": { 
+            "type": "string", 
+            "default": "~/.openclaw/workspace/memory/mesh/" 
+          },
+          "sharedPoolPath": { 
+            "type": "string", 
+            "default": "~/.openclaw/workspace/memory/shared/gates/" 
+          },
+          "queueDbPath": {
+            "type": "string",
+            "default": "~/.openclaw/workspace/projects/mesh-memory/queue.db"
+          }
+        }
+      },
+      "features": {
+        "type": "object",
+        "description": "Feature flags for gradual rollout",
+        "properties": {
+          "consensusProtocol": { 
+            "type": "boolean", 
+            "default": false 
+          },
+          "trustScoring": { 
+            "type": "boolean", 
+            "default": true 
+          },
+          "hotReload": { 
+            "type": "boolean", 
+            "default": true 
+          },
+          "vectorSearch": { 
+            "type": "boolean", 
+            "default": false 
+          },
+          "autoTokenRotation": {
+            "type": "boolean",
+            "default": true
+          },
+          "queuePersistence": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "compatibility": {
+        "type": "object",
+        "properties": {
+          "minOpenClawVersion": { 
+            "type": "string", 
+            "default": "0.15.0" 
+          },
+          "maxOpenClawVersion": { 
+            "type": "string" 
+          },
+          "deprecatedApis": { 
+            "type": "array", 
+            "items": { 
+              "type": "string" 
+            } 
+          }
+        }
+      },
+      "tokenManagement": {
+        "type": "object",
+        "description": "Token management configuration",
+        "properties": {
+          "ttlHours": {
+            "type": "number",
+            "default": 48,
+            "minimum": 1,
+            "maximum": 720
+          },
+          "rotationThresholdHours": {
+            "type": "number",
+            "default": 24,
+            "minimum": 1,
+            "maximum": 168
+          },
+          "checkIntervalMinutes": {
+            "type": "number",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 60
+          },
+          "auditLogPath": {
+            "type": "string",
+            "default": "~/.openclaw/workspace/projects/mesh-memory/logs/token-audit.jsonl"
+          }
+        }
+      },
+      "queue": {
+        "type": "object",
+        "description": "Queue persistence configuration",
+        "properties": {
+          "processorIntervalSeconds": {
+            "type": "number",
+            "default": 30,
+            "minimum": 5,
+            "maximum": 300
+          },
+          "maxRetries": {
+            "type": "number",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 10
+          },
+          "backoffDelays": {
+            "type": "array",
+            "items": { "type": "number" },
+            "default": [30, 60, 120, 240, 480],
+            "description": "Retry delays in seconds"
+          }
+        }
+      }
+    }
+  },
+  
+  "uiHints": {
+    "agentId": { 
+      "label": "Agent ID", 
+      "help": "Your unique name in the mesh (liz/ray/woodhouse)" 
+    },
+    "receiver.port": { 
+      "label": "Receiver Port", 
+      "help": "HTTP port for mesh events (default 18803)" 
+    },
+    "receiver.authToken": { 
+      "label": "Auth Token", 
+      "help": "Secret token for inter-agent authentication", 
+      "sensitive": true 
+    },
+    "storage.backend": { 
+      "label": "Storage Backend", 
+      "help": "local=file-based, mem0=external service" 
+    },
+    "features.consensusProtocol": { 
+      "label": "Enable Consensus Protocol", 
+      "help": "Beta: distributed consensus for critical decisions" 
+    },
+    "features.autoTokenRotation": {
+      "label": "Auto Token Rotation",
+      "help": "Automatically rotate tokens before expiry"
+    },
+    "features.queuePersistence": {
+      "label": "Queue Persistence",
+      "help": "Persist failed messages for retry with exponential backoff"
+    },
+    "tokenManagement.ttlHours": {
+      "label": "Token TTL (hours)",
+      "help": "How long tokens remain valid"
+    },
+    "queue.maxRetries": {
+      "label": "Max Retries",
+      "help": "Maximum retry attempts before moving to dead letter queue"
+    }
+  },
+  
+  "lifecycle": {
+    "hooks": ["gateway:startup", "gateway:shutdown", "config:reload", "health:check"]
+  },
+  
+  "api": {
+    "routes": [
+      { "path": "/mesh/health", "method": "GET", "handler": "healthCheck", "description": "Overall health status" },
+      { "path": "/mesh/health/ready", "method": "GET", "handler": "readinessCheck", "description": "Readiness probe for orchestration" },
+      { "path": "/mesh/health/live", "method": "GET", "handler": "livenessCheck", "description": "Liveness probe for orchestration" },
+      { "path": "/mesh/send", "method": "POST", "handler": "sendMessage", "description": "Send message to peer" },
+      { "path": "/mesh/send/async", "method": "POST", "handler": "sendMessageAsync", "description": "Queue message for async delivery" },
+      { "path": "/mesh/threads", "method": "GET", "handler": "listThreads", "description": "List active collaboration threads" },
+      { "path": "/mesh/threads/:id", "method": "GET", "handler": "getThread", "description": "Get thread details" },
+      { "path": "/mesh/threads", "method": "POST", "handler": "createThread", "description": "Create new collaboration thread" },
+      { "path": "/mesh/memory/search", "method": "GET", "handler": "searchMemory", "description": "Search shared memory pool" },
+      { "path": "/mesh/memory/write", "method": "POST", "handler": "writeMemory", "description": "Write to shared memory pool" },
+      { "path": "/mesh/memory/:id", "method": "GET", "handler": "getMemory", "description": "Read memory entry by ID" },
+      { "path": "/mesh/tokens", "method": "POST", "handler": "createToken", "description": "Create new authentication token" },
+      { "path": "/mesh/tokens", "method": "GET", "handler": "listTokens", "description": "List all tokens" },
+      { "path": "/mesh/tokens/:id", "method": "GET", "handler": "getToken", "description": "Get token status" },
+      { "path": "/mesh/tokens/:id/rotate", "method": "POST", "handler": "rotateToken", "description": "Rotate token" },
+      { "path": "/mesh/tokens/:id/revoke", "method": "POST", "handler": "revokeToken", "description": "Revoke token" },
+      { "path": "/mesh/tokens/check-rotation", "method": "POST", "handler": "checkTokenRotation", "description": "Trigger manual token rotation check" },
+      { "path": "/mesh/metrics/queue", "method": "GET", "handler": "getQueueMetrics", "description": "Get queue depth, oldest, error rate" },
+      { "path": "/mesh/queue/dlq", "method": "GET", "handler": "getDlq", "description": "Get dead letter queue entries" },
+      { "path": "/mesh/queue/dlq/:id/retry", "method": "POST", "handler": "retryDlqEntry", "description": "Retry a DLQ entry" },
+      { "path": "/mesh/queue/dlq/:id", "method": "DELETE", "handler": "deleteDlqEntry", "description": "Delete a DLQ entry" }
+    ]
+  },
+  
+  "requiredOpenClawVersion": ">=2026.4.9",
+  
+  "entryPoints": {
+    "plugin": "./src/plugin.mjs",
+    "tokenManager": "./src/token-manager.mjs",
+    "tokenStore": "./src/token-store.mjs",
+    "queueManager": "./src/queue-manager.mjs"
+  },
+  
+  "scripts": {
+    "setup": "node setup.mjs",
+    "start": "node src/plugin.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  
+  "dependencies": {
+    "express": "^4.18.0",
+    "better-sqlite3": "^12.0.0"
+  },
+  
+  "phase": 1,
+  "deliverables": [
+    "Token management with auto-rotation",
+    "Queue persistence with retry logic",
+    "Dead letter queue",
+    "Token audit logging",
+    "Plugin lifecycle integration"
+  ]
+}

@@ -1,0 +1,132 @@
+# Docker Compose for 3-node mesh integration testing
+# Usage: docker-compose -f docker-compose.test.yml up --abort-on-container-exit
+
+version: '3.8'
+
+services:
+  # Agent A (Alice) - Primary test node
+  agent-a:
+    build:
+      context: ../../..
+      dockerfile: testing/MESH_TEST_FRAMEWORK/docker/Dockerfile.test
+    container_name: mesh-agent-alice
+    environment:
+      - AGENT_ID=alice
+      - AGENT_NAME=Alice
+      - RECEIVER_PORT=18801
+      - RECEIVER_TOKEN=token-alice-mesh-001
+      - THREAD_PORT=18802
+      - THREAD_TOKEN=thread-token-alice
+      - PEERS=[{"agentId":"bob","receiverUrl":"http://agent-b:18801","token":"token-bob-mesh-002"},{"agentId":"charlie","receiverUrl":"http://agent-c:18801","token":"token-charlie-mesh-003"}]
+      - RELAY_ENABLED=true
+      - RELAY_MAX_QUEUE_DEPTH=500
+      - TEST_MODE=true
+    networks:
+      - mesh-test-network
+    volumes:
+      - agent-a-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18801/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Agent B (Bob)
+  agent-b:
+    build:
+      context: ../../..
+      dockerfile: testing/MESH_TEST_FRAMEWORK/docker/Dockerfile.test
+    container_name: mesh-agent-bob
+    environment:
+      - AGENT_ID=bob
+      - AGENT_NAME=Bob
+      - RECEIVER_PORT=18801
+      - RECEIVER_TOKEN=token-bob-mesh-002
+      - THREAD_PORT=18802
+      - THREAD_TOKEN=thread-token-bob
+      - PEERS=[{"agentId":"alice","receiverUrl":"http://agent-a:18801","token":"token-alice-mesh-001"},{"agentId":"charlie","receiverUrl":"http://agent-c:18801","token":"token-charlie-mesh-003"}]
+      - RELAY_ENABLED=true
+      - RELAY_MAX_QUEUE_DEPTH=500
+      - TEST_MODE=true
+    networks:
+      - mesh-test-network
+    volumes:
+      - agent-b-data:/data
+    depends_on:
+      agent-a:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18801/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Agent C (Charlie)
+  agent-c:
+    build:
+      context: ../../..
+      dockerfile: testing/MESH_TEST_FRAMEWORK/docker/Dockerfile.test
+    container_name: mesh-agent-charlie
+    environment:
+      - AGENT_ID=charlie
+      - AGENT_NAME=Charlie
+      - RECEIVER_PORT=18801
+      - RECEIVER_TOKEN=token-charlie-mesh-003
+      - THREAD_PORT=18802
+      - THREAD_TOKEN=thread-token-charlie
+      - PEERS=[{"agentId":"alice","receiverUrl":"http://agent-a:18801","token":"token-alice-mesh-001"},{"agentId":"bob","receiverUrl":"http://agent-b:18801","token":"token-bob-mesh-002"}]
+      - RELAY_ENABLED=true
+      - RELAY_MAX_QUEUE_DEPTH=500
+      - TEST_MODE=true
+    networks:
+      - mesh-test-network
+    volumes:
+      - agent-c-data:/data
+    depends_on:
+      agent-b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18801/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Test Runner - Executes integration tests
+  test-runner:
+    build:
+      context: ../../..
+      dockerfile: testing/MESH_TEST_FRAMEWORK/docker/Dockerfile.test
+    container_name: mesh-test-runner
+    command: npm run test:integration:docker
+    environment:
+      - AGENT_A_URL=http://agent-a:18801
+      - AGENT_B_URL=http://agent-b:18801
+      - AGENT_C_URL=http://agent-c:18801
+      - TEST_TIMEOUT=30000
+    networks:
+      - mesh-test-network
+    depends_on:
+      agent-a:
+        condition: service_healthy
+      agent-b:
+        condition: service_healthy
+      agent-c:
+        condition: service_healthy
+    volumes:
+      - ../..:/workspace
+      - /workspace/node_modules
+
+networks:
+  mesh-test-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  agent-a-data:
+  agent-b-data:
+  agent-c-data:

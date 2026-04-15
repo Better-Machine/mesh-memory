@@ -2,20 +2,69 @@
  * @module memory-relay
  * @description Sends MemoryEvents to peer agents via A2A HTTP POST.
  * Rate-limited to one event per second per peer.
+ * Phase 2: Now uses queue-persistence for zero data loss across restarts.
  */
 
-/**
- * @type {Map<string, number>} Last send timestamp per peer (for rate limiting)
- */
+import { initializeQueuePersistence, persistEvent, markEventAsSent, markEventAsFailed } from "./queue-persistence.mjs";
+import { runRotation } from "./storage-rotation.mjs";
+
+/** @type {Map<string, number>} Last send timestamp per peer (for rate limiting) */
 const lastSendTime = new Map();
 
-/**
- * @type {Map<string, import('./memory-watcher.mjs').MemoryEvent[]>} Queued events per peer
- */
-const pendingQueues = new Map();
+/** @type {Map<string, import('./memory-watcher.mjs').MemoryEvent[]>} Queued events per peer */
+let pendingQueues = new Map();
 
 /** @type {Map<string, NodeJS.Timeout>} Active debounce timers per peer */
 const debounceTimers = new Map();
+
+/** @type {boolean} Queue persistence initialized flag */
+let isPersistenceInitialized = false;
+
+/**
+ * Initialize queue persistence and load existing queue state
+ */
+export async function initializeRelay() {
+  try {
+    // Initialize queue persistence and load existing state
+    const loadedQueues = await initializeQueuePersistence();
+    pendingQueues = loadedQueues;
+    isPersistenceInitialized = true;
+    
+    // Start storage rotation if enabled
+    const config = (await import("./config.mjs")).loadConfig();
+    if (config.storage?.pruneIntervalHours) {
+      // Run initial rotation
+      await runRotation();
+      
+      // Schedule periodic rotation
+      const intervalMs = config.storage.pruneIntervalHours * 60 * 60 * 1000;
+      setInterval(() => {
+        runRotation().catch(err => {
+          console.error('[relay] Storage rotation failed:', err.message);
+        });
+      }, intervalMs);
+      
+      console.log(`[relay] Storage rotation scheduled every ${config.storage.pruneIntervalHours} hours`);
+    }
+    
+    console.log('[relay] Queue persistence initialized, loaded', pendingQueues.size, 'peer queues');
+  } catch (error) {
+    console.error('[relay] Failed to initialize queue persistence:', error.message);
+    // Continue with in-memory queues as fallback
+    isPersistenceInitialized = false;
+  }
+}
+
+/**
+ * Generate event ID for tracking
+ * @param {Object} event - Event object
+ * @returns {string} Event ID
+ */
+function generateEventId(event) {
+  const crypto = require('crypto');
+  const content = `${event.timestamp}-${event.role}-${event.content}`;
+  return crypto.createHash('sha256').update(content).digest('hex').substring(0, 16);
+}
 
 /**
  * Sends a single MemoryEvent to one peer.
@@ -39,13 +88,30 @@ async function sendToPeer(event, peer) {
       console.error(
         `[relay] Failed to send to ${peer.name}: ${res.status} ${res.statusText}`
       );
+      // Mark as failed in persistence
+      if (isPersistenceInitialized) {
+        const eventId = generateEventId(event);
+        await markEventAsFailed(eventId);
+      }
       return false;
     }
 
     console.log(`[relay] Sent to ${peer.name}: ${event.role} (${event.content.length} chars)`);
+    
+    // Mark as sent in persistence
+    if (isPersistenceInitialized) {
+      const eventId = generateEventId(event);
+      await markEventAsSent(eventId);
+    }
+    
     return true;
   } catch (err) {
     console.error(`[relay] Error sending to ${peer.name}:`, err.message);
+    // Mark as failed in persistence
+    if (isPersistenceInitialized) {
+      const eventId = generateEventId(event);
+      await markEventAsFailed(eventId);
+    }
     return false;
   }
 }
@@ -93,10 +159,15 @@ async function flushPeer(peerName, peer, rateLimit) {
 
 /**
  * Relays a MemoryEvent to all configured peers with rate limiting.
+ * Phase 2: Persists events to disk for zero data loss.
  * @param {import('./memory-watcher.mjs').MemoryEvent} event - Event to relay
  * @param {Object} config - Full config object
  */
 export async function relayEvent(event, config) {
+  if (!isPersistenceInitialized) {
+    console.warn('[relay] Queue persistence not initialized, using in-memory mode');
+  }
+
   const { peers, relayRateLimit } = config;
   // M3: Configurable max queue depth to prevent unbounded memory growth
   const MAX_QUEUE_DEPTH = config.relayMaxQueueDepth || 500;
@@ -115,6 +186,15 @@ export async function relayEvent(event, config) {
     }
 
     queue.push(event);
+
+    // Persist event to disk
+    if (isPersistenceInitialized) {
+      try {
+        await persistEvent(peer.name, event);
+      } catch (error) {
+        console.error(`[relay] Failed to persist event for ${peer.name}:`, error.message);
+      }
+    }
 
     // M2: Attach .catch() to surface unexpected errors from flushPeer
     flushPeer(peer.name, peer, relayRateLimit).catch(err =>

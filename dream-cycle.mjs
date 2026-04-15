@@ -1,7 +1,7 @@
 /**
  * @module dream-cycle
  * @description Nightly memory consolidation. Reads recent mesh and LCM markdown,
- * generates MEMORY.md update suggestions via OpenClaw agent API.
+ * generates MEMORY.md update suggestions via local prompt generation.
  * Designed to run via cron at 2-3 AM.
  */
 
@@ -86,75 +86,27 @@ ${lcmContents.length > 0 ? lcmContents.join("\n\n---\n\n") : "(No LCM summaries 
 }
 
 /**
- * Loads the Together AI API key from OpenClaw's auth-profiles.json.
- * @returns {string} API key
+ * Generates a consolidation prompt from recent mesh and LCM entries.
+ * @param {string[]} meshContents - Recent mesh markdown contents
+ * @param {string[]} lcmContents - Recent LCM markdown contents
+ * @returns {string} Consolidation prompt for manual review
  */
-function loadTogetherKey() {
-  const { readFileSync } = require ? require("node:fs") : (() => { throw new Error("require not available"); })();
-  // Use static import-style read since this is ESM
-  return null; // loaded async below
-}
-
-/**
- * Calls Together AI directly via OpenAI-compatible API to generate consolidation suggestions.
- * Avoids `openclaw agent --local` which always uses the default Anthropic model and
- * fails at 3 AM when Anthropic is overloaded.
- *
- * Model: meta-llama/Llama-3.3-70B-Instruct-Turbo — cheap, reliable, $0.88/M tokens.
- *
- * @param {string} prompt - The consolidation prompt
- * @param {Object} config - Config object
- * @returns {Promise<string>} Agent response text
- */
-async function callAgent(prompt, config) {
-  const { readFile } = await import("node:fs/promises");
-  const { homedir } = await import("node:os");
-  const { resolve } = await import("node:path");
-
-  // Load Together AI key from openclaw auth-profiles
-  let apiKey;
-  try {
-    const profilesPath = resolve(homedir(), ".openclaw/agents/main/agent/auth-profiles.json");
-    const profiles = JSON.parse(await readFile(profilesPath, "utf-8"));
-    apiKey = profiles?.profiles?.["together:default"]?.key
-          || profiles?.profiles?.["openai:together"]?.token;
-    if (!apiKey) throw new Error("together:default key not found in auth-profiles.json");
-  } catch (err) {
-    console.warn(`[dream] Could not load Together AI key: ${err.message}`);
-    return `# Dream Cycle — API Unavailable\n\nCould not load Together AI credentials. Manual review recommended.\n\n${prompt}`;
+function generateConsolidationPrompt(meshContents, lcmContents) {
+  const sections = [];
+  
+  if (meshContents.length > 0) {
+    sections.push(`## Mesh Entries (${meshContents.length} files)\n\n${meshContents.join("\n\n---\n\n")}`);
   }
-
-  try {
-    const response = await fetch("https://api.together.xyz/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-        messages: [
-          { role: "user", content: prompt }
-        ],
-        max_tokens: 4096,
-        temperature: 0.3,
-      }),
-      signal: AbortSignal.timeout(120000),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Together AI HTTP ${response.status}: ${body.slice(0, 200)}`);
-    }
-
-    const data = await response.json();
-    const text = data?.choices?.[0]?.message?.content;
-    if (!text) throw new Error("No content in Together AI response");
-    return text;
-  } catch (err) {
-    console.warn(`[dream] Together AI call failed (${err.message}), falling back to raw prompt`);
-    return `# Dream Cycle — API Unavailable\n\nThe consolidation prompt was generated but the Together AI call failed: ${err.message}\nManual review of the raw entries below is recommended.\n\n${prompt}`;
+  
+  if (lcmContents.length > 0) {
+    sections.push(`## LCM Summaries (${lcmContents.length} files)\n\n${lcmContents.join("\n\n---\n\n")}`);
   }
+  
+  if (sections.length === 0) {
+    return "# Dream Cycle — No Entries\n\nNo recent mesh or LCM entries found for consolidation.";
+  }
+  
+  return `# Dream Cycle — Manual Review Required\n\n${sections.join("\n\n")}\n\n---\n\n## Instructions\n\nReview the entries above and update MEMORY.md with any high-priority information that should be preserved long-term.`;
 }
 
 /**

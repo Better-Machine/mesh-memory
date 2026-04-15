@@ -1,7 +1,7 @@
 {
   "name": "mesh-memory",
-  "version": "0.1.0",
-  "description": "Per-message cross-agent memory mesh for OpenClaw",
+  "version": "1.0.0",
+  "description": "Per-message cross-agent memory mesh for OpenClaw - Phase 1: Foundation Hardening",
   "type": "module",
   "scripts": {
     "setup": "node setup.mjs",
@@ -16,17 +16,27 @@
     "shared-pool": "node shared-pool-write.mjs",
     "test:pool": "node --test tests/shared-pool.test.mjs",
     "test:backends": "node --test tests/memory-backend.test.mjs",
-    "test": "node --test tests/shared-pool.test.mjs tests/memory-backend.test.mjs"
+    "test:phase1": "node --test tests/phase1/*.test.mjs",
+    "test": "node --test tests/*.test.mjs tests/phase1/*.test.mjs"
   },
   "dependencies": {
-    "express": "^4.18.0",
     "better-sqlite3": "^12.0.0",
+    "chokidar": "^3.6.0",
     "concurrently": "^8.0.0",
-    "chokidar": "^3.6.0"
+    "express": "^4.18.0",
+    "sqlite3": "^6.0.1"
   },
   "authors": [
-    { "name": "Liz", "role": "AI partner, Better Machine", "github": "LizSquirrelBot" },
-    { "name": "Erik Ross", "role": "Founder, Better Machine", "github": "Better-Machine" }
+    {
+      "name": "Liz",
+      "role": "AI partner, Better Machine",
+      "github": "LizSquirrelBot"
+    },
+    {
+      "name": "Erik Ross",
+      "role": "Founder, Better Machine",
+      "github": "Better-Machine"
+    }
   ],
   "license": "MIT"
 }
