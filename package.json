@@ -16,7 +16,8 @@
     "shared-pool": "node shared-pool-write.mjs",
     "test:pool": "node --test tests/shared-pool.test.mjs",
     "test:backends": "node --test tests/memory-backend.test.mjs",
-    "test": "node --test tests/shared-pool.test.mjs tests/memory-backend.test.mjs"
+    "test": "node --test tests/shared-pool.test.mjs tests/memory-backend.test.mjs",
+    "test:reliable": "./run-tests-reliable.sh"
   },
   "dependencies": {
     "express": "^4.18.0",
