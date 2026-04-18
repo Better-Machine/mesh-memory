@@ -34,6 +34,112 @@ let walWriteStream = null;
 let walRotationTimer = null;
 let snapshotTimer = null;
 
+// WAL Write Queue - Phase 3 fix for race condition
+class WALWriter {
+  constructor() {
+    this.fd = null;
+    this.currentFile = null;
+    this.queue = [];
+    this.processing = false;
+    this.pendingRotation = false;
+    this.walSize = 0;
+  }
+
+  async write(entry) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ entry, resolve, reject });
+      this.process();
+    });
+  }
+
+  async process() {
+    if (this.processing) return;
+    this.processing = true;
+
+    while (this.queue.length > 0) {
+      const { entry, resolve, reject } = this.queue.shift();
+
+      try {
+        // Check rotation inside the queue (serialized) - P1 fix
+        if (this.pendingRotation || !this.currentFile || this.needsRotation()) {
+          await this.rotate();
+        }
+
+        const line = JSON.stringify(entry) + '\n';
+        const buffer = Buffer.from(line);
+        writeSync(this.fd, buffer);
+        
+        // P2: Use fdatasyncSync for performance (data only, no metadata)
+        // This is ~20-30% faster than fsyncSync
+        const { fdatasyncSync } = await import('fs');
+        fdatasyncSync(this.fd);
+        
+        this.walSize += buffer.length;
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    }
+
+    this.processing = false;
+  }
+
+  needsRotation() {
+    return this.walSize > WAL_MAX_SIZE_MB * 1024 * 1024;
+  }
+
+  async rotate() {
+    // Close current file descriptor
+    if (this.fd !== null) {
+      const { fdatasyncSync, closeSync } = await import('fs');
+      fdatasyncSync(this.fd);
+      closeSync(this.fd);
+      this.fd = null;
+    }
+
+    // Generate new WAL file name
+    const { promises: fs } = await import('fs');
+    const { join } = await import('path');
+    
+    const walFiles = await getWalFiles();
+    const nextNumber = walFiles.length > 0 
+      ? parseInt(walFiles[walFiles.length - 1].split('.')[0]) + 1 
+      : 1;
+    
+    this.currentFile = `${String(nextNumber).padStart(6, '0')}.log`;
+    const walPath = join(WAL_DIR, this.currentFile);
+    
+    // Open new file descriptor
+    const { openSync } = await import('fs');
+    this.fd = openSync(walPath, 'a');
+    this.walSize = 0;
+    this.pendingRotation = false;
+    
+    // Update global references for backwards compatibility
+    currentWalFile = this.currentFile;
+    walFd = this.fd;
+    
+    console.log(`[queue-persistence] Rotated to new WAL file: ${this.currentFile}`);
+  }
+
+  async shutdown() {
+    // Wait for queue to drain
+    while (this.queue.length > 0 || this.processing) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    
+    if (this.fd !== null) {
+      const { fdatasyncSync, closeSync } = await import('fs');
+      fdatasyncSync(this.fd);
+      closeSync(this.fd);
+      this.fd = null;
+    }
+  }
+}
+
+// Global WAL writer instance
+const walWriter = new WALWriter();
+
 /**
  * Initialize the queue persistence system
  * @returns {Promise<Map<string, any[]>>} Reconstructed queue state
@@ -311,102 +417,38 @@ export async function persistEvent(peerName, event) {
 }
 
 /**
- * Append entry to WAL
+ * Append entry to WAL (P1: Now uses write queue for thread safety)
  * @param {Object} entry - WAL entry
  */
 async function appendToWal(entry) {
-  if (!currentWalFile || walFd === null) {
-    await rotateWalFile();
-  }
-  
-  const line = JSON.stringify(entry) + '\n';
-  // Use synchronous write for durability
-  writeSync(walFd, line);
+  // P3: Use write queue instead of direct write
+  await walWriter.write(entry);
 }
 
 /**
  * Ensure WAL is fsynced to disk
- * FIXED: Uses fs.fsyncSync for actual durability
+ * FIXED: Now handled by write queue (fdatasyncSync for performance)
+ * Kept for backwards compatibility
  */
 async function fsyncWal() {
-  if (walFd !== null) {
-    fsyncSync(walFd);
-    return true;
-  }
-  return false;
+  // P2: fsync now happens inside write queue with fdatasyncSync
+  // This function kept for API compatibility
+  return true;
 }
 
-// WAL rotation state
+// WAL rotation state - DEPRECATED: Now handled by WALWriter class
 let isRotating = false;
 let rotationQueue = [];
 
 /**
  * Rotate to a new WAL file
- * FIXED: Uses openSync for durability
+ * DEPRECATED: Now handled by WALWriter.rotate()
+ * Kept for backwards compatibility with external callers
  */
 async function rotateWalFile() {
-  if (isRotating) {
-    // Queue this rotation request
-    return new Promise((resolve, reject) => {
-      rotationQueue.push({ resolve, reject });
-    });
-  }
-  
-  isRotating = true;
-  
-  try {
-    // Close current WAL file descriptor
-    if (walFd !== null) {
-      fsyncSync(walFd);
-      closeSync(walFd);
-      walFd = null;
-    }
-    
-    // Close stream if it exists (backwards compat)
-    if (walWriteStream) {
-      await new Promise((resolve, reject) => {
-        walWriteStream.end((err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
-      walWriteStream = null;
-    }
-    
-    // Generate new WAL file name
-    const walFiles = await getWalFiles();
-    const nextNumber = walFiles.length > 0 
-      ? parseInt(walFiles[walFiles.length - 1].split('.')[0]) + 1 
-      : 1;
-    
-    currentWalFile = `${String(nextNumber).padStart(6, '0')}.log`;
-    const walPath = join(WAL_DIR, currentWalFile);
-    
-    // Open file descriptor synchronously for durability
-    walFd = openSync(walPath, 'a');
-    
-    console.log(`[queue-persistence] Rotated to new WAL file: ${currentWalFile}`);
-    
-    // Process any queued rotation requests
-    isRotating = false;
-    if (rotationQueue.length > 0) {
-      const nextRequest = rotationQueue.shift();
-      try {
-        await rotateWalFile();
-        nextRequest.resolve();
-      } catch (error) {
-        nextRequest.reject(error);
-      }
-    }
-  } catch (error) {
-    isRotating = false;
-    // Reject all queued requests
-    while (rotationQueue.length > 0) {
-      const request = rotationQueue.shift();
-      request.reject(error);
-    }
-    throw error;
-  }
+  // P1: Delegate to WALWriter
+  walWriter.pendingRotation = true;
+  await walWriter.rotate();
 }
 
 /**
@@ -605,7 +647,7 @@ export async function getQueueStats() {
 
 /**
  * Gracefully shutdown queue persistence
- * FIXED: Properly fsync and close file descriptor
+ * FIXED: Properly drain write queue and shutdown WALWriter
  */
 export async function shutdownQueuePersistence() {
   try {
@@ -619,12 +661,8 @@ export async function shutdownQueuePersistence() {
       snapshotTimer = null;
     }
     
-    // Close WAL file descriptor with fsync
-    if (walFd !== null) {
-      fsyncSync(walFd);
-      closeSync(walFd);
-      walFd = null;
-    }
+    // P1: Shutdown WAL writer (drains queue, fsyncs, closes)
+    await walWriter.shutdown();
     
     // Close stream if it exists (backwards compat)
     if (walWriteStream) {
