@@ -19,7 +19,7 @@ StandardError=journal
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=full
-ProtectHome=read-only
+ProtectHome=true
 ReadWritePaths=%h/.openclaw/workspace/memory/queue
 ReadWritePaths=%h/.openclaw/workspace/memory/archive
 
