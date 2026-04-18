@@ -48,6 +48,9 @@ export class TokenStore {
     // Load existing tokens from disk
     await this.#loadTokensFromDisk();
 
+    // Run cleanup of expired tokens (non-blocking)
+    this.#cleanupExpiredTokens().catch(() => {});
+
     this.initialized = true;
   }
 
@@ -427,6 +430,64 @@ export class TokenStore {
   #generateSecureToken() {
     return crypto.randomBytes(32).toString('base64url');
   }
+
+  /**
+   * Cleanup expired tokens older than retention period
+   * Retention: 7 days for expired tokens
+   * Called automatically on initialization (non-blocking)
+   */
+  async #cleanupExpiredTokens() {
+    const RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+    const now = Date.now();
+    let deleted = 0;
+
+    try {
+      const files = await fs.readdir(this.storePath);
+      const tokenFiles = files.filter(f => f.endsWith('.enc') && !f.startsWith('.'));
+
+      for (const file of tokenFiles) {
+        const filePath = path.join(this.storePath, file);
+        
+        try {
+          const stats = await fs.stat(filePath);
+          const age = now - stats.mtime.getTime();
+          
+          // Check if token is expired by reading it
+          let isExpired = false;
+          try {
+            const encrypted = await fs.readFile(filePath);
+            const decrypted = this.#decrypt(encrypted);
+            const tokenData = JSON.parse(decrypted);
+            if (tokenData.expiresAt && tokenData.expiresAt < now) {
+              isExpired = true;
+            }
+          } catch (err) {
+            // Corrupt file - treat as expired
+            isExpired = true;
+          }
+          
+          // Delete if expired AND older than retention
+          if (isExpired && age > RETENTION_MS) {
+            await fs.unlink(filePath);
+            deleted++;
+            
+            // Also remove from memory cache
+            const tokenId = file.replace('.enc', '');
+            this.tokens.delete(tokenId);
+          }
+        } catch (err) {
+          // Skip files we can't process
+        }
+      }
+
+      if (deleted > 0) {
+        console.log(`[TokenStore] Cleaned up ${deleted} expired tokens`);
+      }
+    } catch (err) {
+      // Ignore cleanup errors - don't block initialization
+    }
+  }
+}
 }
 
 // Singleton instance
