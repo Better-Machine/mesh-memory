@@ -5,23 +5,34 @@
  */
 
 import { promises as fs } from 'fs';
-import { join, basename } from 'path';
+import { openSync, writeSync, fsyncSync, closeSync } from 'fs';
+import { join, basename, resolve } from 'path';
 import { createHash } from 'crypto';
+import { loadConfig } from './config.mjs';
+
+// Config will be loaded on initialization
+let config = null;
 
 // SQLite will be dynamically imported to avoid startup overhead
 let db = null;
 let dbPath = null;
 
-// WAL configuration
-const WAL_DIR = 'memory/queue/wal';
-const SNAPSHOT_DIR = 'memory/queue/snapshots';
-const INDEX_DB = 'memory/queue/index.db';
+// Configurable paths (set during initialization)
+let WAL_DIR = 'memory/queue/wal';
+let SNAPSHOT_DIR = 'memory/queue/snapshots';
+let INDEX_DB = 'memory/queue/index.db';
+let WAL_MAX_SIZE_MB = 10;
+let SNAPSHOT_INTERVAL_HOURS = 24;
+let RETENTION_DAYS = 7;
+let QUEUE_PERSISTENCE_ENABLED = true;
 
 // Queue state
 const pendingQueues = new Map();
 let currentWalFile = null;
+let walFd = null;  // File descriptor for synchronous fsync
 let walWriteStream = null;
 let walRotationTimer = null;
+let snapshotTimer = null;
 
 /**
  * Initialize the queue persistence system
@@ -29,6 +40,27 @@ let walRotationTimer = null;
  */
 export async function initializeQueuePersistence() {
   try {
+    // Load config
+    config = loadConfig();
+    
+    // Check if persistence is enabled
+    QUEUE_PERSISTENCE_ENABLED = config.queue?.persistenceEnabled ?? true;
+    if (!QUEUE_PERSISTENCE_ENABLED) {
+      console.log('[queue-persistence] Persistence disabled, using in-memory mode');
+      return pendingQueues;
+    }
+    
+    // Configure paths from config
+    const queueDir = config.queue?.queueDir ?? 'memory/queue';
+    WAL_DIR = join(queueDir, 'wal');
+    SNAPSHOT_DIR = join(queueDir, 'snapshots');
+    INDEX_DB = config.queue?.indexDbPath ?? join(queueDir, 'index.db');
+    
+    // Configure retention from config
+    WAL_MAX_SIZE_MB = config.queue?.walMaxSizeMB ?? 10;
+    SNAPSHOT_INTERVAL_HOURS = config.queue?.snapshotIntervalHours ?? 24;
+    RETENTION_DAYS = config.queue?.retentionDays ?? 7;
+    
     // Ensure directories exist
     await fs.mkdir(WAL_DIR, { recursive: true });
     await fs.mkdir(SNAPSHOT_DIR, { recursive: true });
@@ -70,7 +102,7 @@ export async function initializeQueuePersistence() {
     // Start background WAL rotation
     startWalRotation();
     
-    console.log('[queue-persistence] Initialized successfully');
+    console.log(`[queue-persistence] Initialized (WAL max: ${WAL_MAX_SIZE_MB}MB, snapshot: ${SNAPSHOT_INTERVAL_HOURS}h, retention: ${RETENTION_DAYS}d)`);
     return reconstructedState;
     
   } catch (error) {
@@ -240,6 +272,11 @@ async function syncIndexWithState(state) {
  * @returns {Promise<boolean>} Success status
  */
 export async function persistEvent(peerName, event) {
+  // Skip persistence if disabled
+  if (!QUEUE_PERSISTENCE_ENABLED) {
+    return true;
+  }
+  
   try {
     const timestamp = new Date().toISOString();
     const eventId = generateEventId(event);
@@ -278,29 +315,25 @@ export async function persistEvent(peerName, event) {
  * @param {Object} entry - WAL entry
  */
 async function appendToWal(entry) {
-  if (!walWriteStream) {
+  if (!currentWalFile || walFd === null) {
     await rotateWalFile();
   }
   
   const line = JSON.stringify(entry) + '\n';
-  return new Promise((resolve, reject) => {
-    walWriteStream.write(line, (err) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
+  // Use synchronous write for durability
+  writeSync(walFd, line);
 }
 
 /**
  * Ensure WAL is fsynced to disk
+ * FIXED: Uses fs.fsyncSync for actual durability
  */
 async function fsyncWal() {
-  if (walWriteStream) {
-    return new Promise((resolve, reject) => {
-      walWriteStream.flush?.() || walWriteStream.once('finish', resolve);
-      walWriteStream.once('error', reject);
-    });
+  if (walFd !== null) {
+    fsyncSync(walFd);
+    return true;
   }
+  return false;
 }
 
 // WAL rotation state
@@ -309,6 +342,7 @@ let rotationQueue = [];
 
 /**
  * Rotate to a new WAL file
+ * FIXED: Uses openSync for durability
  */
 async function rotateWalFile() {
   if (isRotating) {
@@ -321,7 +355,14 @@ async function rotateWalFile() {
   isRotating = true;
   
   try {
-    // Close current WAL file
+    // Close current WAL file descriptor
+    if (walFd !== null) {
+      fsyncSync(walFd);
+      closeSync(walFd);
+      walFd = null;
+    }
+    
+    // Close stream if it exists (backwards compat)
     if (walWriteStream) {
       await new Promise((resolve, reject) => {
         walWriteStream.end((err) => {
@@ -341,8 +382,8 @@ async function rotateWalFile() {
     currentWalFile = `${String(nextNumber).padStart(6, '0')}.log`;
     const walPath = join(WAL_DIR, currentWalFile);
     
-    // Create new write stream
-    walWriteStream = await fs.createWriteStream(walPath, { flags: 'a' });
+    // Open file descriptor synchronously for durability
+    walFd = openSync(walPath, 'a');
     
     console.log(`[queue-persistence] Rotated to new WAL file: ${currentWalFile}`);
     
@@ -379,9 +420,8 @@ function startWalRotation() {
       if (walFiles.length > 0) {
         const currentWalPath = join(WAL_DIR, walFiles[walFiles.length - 1]);
         const stats = await fs.stat(currentWalPath);
-        const maxSizeMB = 10; // Configurable via config.queue.walMaxSizeMB
-        
-        if (stats.size > maxSizeMB * 1024 * 1024) {
+        // Use configured max size
+        if (stats.size > WAL_MAX_SIZE_MB * 1024 * 1024) {
           await rotateWalFile();
         }
       }
@@ -390,14 +430,14 @@ function startWalRotation() {
     }
   }, 10 * 60 * 1000); // Check every 10 minutes
   
-  // Start snapshot creation timer (every 24 hours)
-  setInterval(async () => {
+  // Start snapshot creation timer (using configured interval)
+  snapshotTimer = setInterval(async () => {
     try {
       await createSnapshot();
     } catch (error) {
       console.error('[queue-persistence] Snapshot creation failed:', error);
     }
-  }, 24 * 60 * 60 * 1000);
+  }, SNAPSHOT_INTERVAL_HOURS * 60 * 60 * 1000);
 }
 
 /**
@@ -454,7 +494,7 @@ async function cleanupOldSnapshots() {
       .sort()
       .reverse();
     
-    // Keep last 30 snapshots (assuming one per day)
+    // Keep last 30 snapshots (one per day = 30 days)
     const filesToDelete = snapshotFiles.slice(30);
     
     for (const file of filesToDelete) {
@@ -468,14 +508,14 @@ async function cleanupOldSnapshots() {
 }
 
 /**
- * Clean up old WAL files (keep last 7 days worth)
+ * Clean up old WAL files (keep last RETENTION_DAYS worth)
  */
 async function cleanupOldWalFiles() {
   try {
     const walFiles = await getWalFiles();
     
-    // Keep last 7 WAL files (assuming rotation every ~10MB or 10 minutes)
-    const filesToDelete = walFiles.slice(0, -7);
+    // Keep last RETENTION_DAYS WAL files (assuming rotation every ~10MB or 10 minutes)
+    const filesToDelete = walFiles.slice(0, -RETENTION_DAYS);
     
     for (const file of filesToDelete) {
       const filePath = join(WAL_DIR, file);
@@ -565,24 +605,39 @@ export async function getQueueStats() {
 
 /**
  * Gracefully shutdown queue persistence
+ * FIXED: Properly fsync and close file descriptor
  */
 export async function shutdownQueuePersistence() {
   try {
     // Stop background timers
     if (walRotationTimer) {
       clearInterval(walRotationTimer);
+      walRotationTimer = null;
+    }
+    if (snapshotTimer) {
+      clearInterval(snapshotTimer);
+      snapshotTimer = null;
     }
     
-    // Close WAL write stream
+    // Close WAL file descriptor with fsync
+    if (walFd !== null) {
+      fsyncSync(walFd);
+      closeSync(walFd);
+      walFd = null;
+    }
+    
+    // Close stream if it exists (backwards compat)
     if (walWriteStream) {
       await new Promise((resolve) => {
         walWriteStream.end(resolve);
       });
+      walWriteStream = null;
     }
     
     // Close database
     if (db) {
       await db.close();
+      db = null;
     }
     
     console.log('[queue-persistence] Shutdown complete');

@@ -351,53 +351,6 @@ export class TunnelPublisher {
       }
 
       return summary;
-            this.logger.debug(`Publishing to peer (attempt ${attempt + 1})`, { peer: peer.url, factId: fact.id });
-            
-            const result = await postFactToPeer(fact, peer, peer.token || this.token, this.correlationId);
-            
-            if (result.ok) {
-              this.logger.info("Fact published successfully", { peer: peer.url, factId: fact.id });
-              success = true;
-              summary[peer.url] = { sent: true, attempts: attempt + 1, status: result.status };
-              break;
-            } else if (result.status === 409) {
-              // Duplicate - treat as success
-              this.logger.info("Fact already exists on peer", { peer: peer.url, factId: fact.id });
-              success = true;
-              summary[peer.url] = { sent: true, duplicate: true, attempts: attempt + 1 };
-              break;
-            }
-          } catch (err) {
-            lastError = err;
-            this.logger.warn(`Publish error (attempt ${attempt + 1})`, { 
-              peer: peer.url, 
-              error: err.message,
-              code: err.code 
-            });
-
-            // Don't retry permanent errors
-            if (err.code === "TUNNEL_AUTH") {
-              this.logger.error("Authentication failed, not retrying", { peer: peer.url });
-              break;
-            }
-          }
-
-          // Exponential backoff before retry
-          if (attempt < MAX_RETRIES - 1) {
-            await sleep(RETRY_BACKOFF_MS[attempt] || 15000);
-          }
-        }
-
-        if (!success) {
-          this.logger.error(`Failed to publish after ${MAX_RETRIES} attempts`, { peer: peer.url, factId: fact.id });
-          await queueFailedPublish(fact, peer, lastError || new Error("Unknown error"), this.correlationId);
-          summary[peer.url] = { sent: false, error: lastError?.message, queued: true };
-        }
-
-        // Rate limit between peers
-        await sleep(RATE_LIMIT_MS);
-      }
-
       return { factId: fact.id, summary, published: Object.values(summary).some(s => s.sent) };
     }, { operation: "publishFact", factId: fact?.id });
   }
