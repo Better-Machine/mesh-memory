@@ -135,7 +135,7 @@ async function main() {
   const prompt = buildPrompt(meshContents, lcmContents);
   console.log(`[dream] Prompt length: ${prompt.length} chars`);
 
-  const suggestions = await callAgent(prompt, config);
+  const suggestions = generateConsolidationPrompt(meshContents, lcmContents);
 
   const outputPath = resolve(MEMORY_BASE, `dream-cycle-${today}.md`);
   await mkdir(MEMORY_BASE, { recursive: true });

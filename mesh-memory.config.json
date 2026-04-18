@@ -5,7 +5,27 @@
   "threadPort": 18802,
   "watchPath": "~/.openclaw/agents/main/sessions/",
   "relayEnabled": false,
+  "relayRateLimit": 1000,
   "relayMaxQueueDepth": 500,
+  "token": {
+    "masterToken": "generate-with-setup-script",
+    "ephemeralTokenTtlHours": 24,
+    "autoRotate": true,
+    "rotationIntervalHours": 12
+  },
+  "storage": {
+    "meshLogRetentionDays": 30,
+    "threadRetentionDays": 7,
+    "archiveEnabled": true,
+    "archivePath": "~/.openclaw/workspace/memory/archive",
+    "pruneIntervalHours": 24
+  },
+  "queue": {
+    "persistenceEnabled": true,
+    "walMaxSizeMB": 10,
+    "snapshotIntervalHours": 24,
+    "retentionDays": 7
+  },
   "memory": {
     "backend": "local",
     "mem0": {

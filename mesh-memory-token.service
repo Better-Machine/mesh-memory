@@ -1,0 +1,27 @@
+[Unit]
+Description=Mesh-Memory Token Service
+After=network.target
+Wants=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=erik-ross
+WorkingDirectory=%h/.openclaw/workspace/projects/mesh-memory
+Environment="NODE_ENV=production"
+ExecStart=/usr/bin/node token-service.mjs
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=%h/.openclaw/workspace/memory/queue
+ReadWritePaths=%h/.openclaw/workspace/memory/archive
+
+[Install]
+WantedBy=multi-user.target
