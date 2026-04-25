@@ -2,9 +2,11 @@
  * @module token-lifecycle
  * @description Ephemeral token issuance, rotation, and revocation service.
  * Provides HTTP endpoints for token management with SQLite persistence.
+ * 
+ * CHANGES: Ported from bun:sqlite to better-sqlite3 (Node.js compatible)
  *
  * @author Liz (Better Machine)
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 import { createServer } from "node:http";
@@ -12,7 +14,7 @@ import { resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import { mkdir, readFile } from "node:fs/promises";
 import { randomBytes, createHash } from "node:crypto";
-import { Database } from "bun:sqlite";
+import Database from "better-sqlite3";
 
 // ============================================================================
 // Configuration
@@ -63,7 +65,7 @@ function calculateExpiry(ttlHours) {
 class TokenDatabase {
   constructor(dbPath) {
     this.db = new Database(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.pragma("journal_mode = WAL");
     this.initSchema();
     this.revokedCache = new Set();
     this.loadRevokedCache();
@@ -79,7 +81,7 @@ class TokenDatabase {
         expires_at TEXT NOT NULL,
         revoked INTEGER NOT NULL DEFAULT 0,
         revoked_at TEXT,
-        token_type TEXT NOT NULL DEFAULT 'ephemeral' -- 'master' or 'ephemeral'
+        token_type TEXT NOT NULL DEFAULT 'ephemeral'
       );
 
       CREATE INDEX IF NOT EXISTS idx_token_hash ON tokens(token_hash);
@@ -90,46 +92,37 @@ class TokenDatabase {
   }
 
   loadRevokedCache() {
-    const rows = this.db.query("SELECT token_hash FROM tokens WHERE revoked = 1").all();
+    const stmt = this.db.prepare("SELECT token_hash FROM tokens WHERE revoked = 1");
+    const rows = stmt.all();
     for (const row of rows) {
       this.revokedCache.add(row.token_hash);
     }
   }
 
-  /**
-   * Store a new token.
-   * @param {Object} params
-   * @returns {Object} Stored token record
-   */
   storeToken({ peerName, tokenHash, expiresAt, tokenType = "ephemeral" }) {
-    const result = this.db.query(`
+    const insertStmt = this.db.prepare(`
       INSERT INTO tokens (peer_name, token_hash, expires_at, token_type)
       VALUES (?, ?, ?, ?)
-      RETURNING id, peer_name, issued_at, expires_at, token_type
-    `).get(peerName, tokenHash, expiresAt, tokenType);
+    `);
+    const info = insertStmt.run(peerName, tokenHash, expiresAt, tokenType);
 
-    return result;
+    const fetchStmt = this.db.prepare(`
+      SELECT id, peer_name, issued_at, expires_at, token_type
+      FROM tokens WHERE rowid = ?
+    `);
+    return fetchStmt.get(info.lastInsertRowid);
   }
 
-  /**
-   * Validate a token (check exists, not expired, not revoked).
-   * @param {string} tokenHash
-   * @returns {Object|null} Token record if valid, null otherwise
-   */
   validateToken(tokenHash) {
-    // Fast-path: check revoked cache
-    if (this.revokedCache.has(tokenHash)) {
-      return null;
-    }
+    if (this.revokedCache.has(tokenHash)) return null;
 
-    const row = this.db.query(`
+    const stmt = this.db.prepare(`
       SELECT id, peer_name, issued_at, expires_at, revoked, token_type
-      FROM tokens
-      WHERE token_hash = ?
-    `).get(tokenHash);
+      FROM tokens WHERE token_hash = ?
+    `);
+    const row = stmt.get(tokenHash);
 
-    if (!row) return null;
-    if (row.revoked) return null;
+    if (!row || row.revoked) return null;
 
     const now = new Date().toISOString();
     if (row.expires_at < now) return null;
@@ -137,76 +130,55 @@ class TokenDatabase {
     return row;
   }
 
-  /**
-   * Revoke a token.
-   * @param {string} tokenHash
-   * @returns {boolean} Success
-   */
   revokeToken(tokenHash) {
-    const result = this.db.query(`
+    const stmt = this.db.prepare(`
       UPDATE tokens
       SET revoked = 1, revoked_at = datetime('now')
       WHERE token_hash = ? AND revoked = 0
-    `).run(tokenHash);
+    `);
+    const info = stmt.run(tokenHash);
 
-    if (result.changes > 0) {
+    if (info.changes > 0) {
       this.revokedCache.add(tokenHash);
       return true;
     }
     return false;
   }
 
-  /**
-   * Find tokens nearing expiry for auto-rotation.
-   * @param {number} hoursBeforeExpiry
-   * @returns {Array} Tokens to rotate
-   */
   findTokensForRotation(hoursBeforeExpiry = 12) {
     const cutoff = new Date();
     cutoff.setHours(cutoff.getHours() + hoursBeforeExpiry);
 
-    return this.db.query(`
+    const stmt = this.db.prepare(`
       SELECT id, peer_name, token_hash, expires_at
       FROM tokens
-      WHERE revoked = 0
-        AND expires_at <= ?
-        AND token_type = 'ephemeral'
-    `).all(cutoff.toISOString());
+      WHERE revoked = 0 AND expires_at <= ? AND token_type = 'ephemeral'
+    `);
+    return stmt.all(cutoff.toISOString());
   }
 
-  /**
-   * Clean up expired tokens older than retention period.
-   * @param {number} retentionDays
-   * @returns {number} Number of tokens purged
-   */
   purgeExpiredTokens(retentionDays = 30) {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - retentionDays);
 
-    const result = this.db.query(`
+    const stmt = this.db.prepare(`
       DELETE FROM tokens
-      WHERE expires_at < ?
-        AND (revoked = 1 OR expires_at < datetime('now', '-1 day'))
-    `).run(cutoff.toISOString());
-
-    return result.changes;
+      WHERE expires_at < ? AND (revoked = 1 OR expires_at < datetime('now', '-1 day'))
+    `);
+    const info = stmt.run(cutoff.toISOString());
+    return info.changes;
   }
 
-  /**
-   * Get token stats for monitoring.
-   * @returns {Object} Token statistics
-   */
   getStats() {
-    const stats = this.db.query(`
+    const stmt = this.db.prepare(`
       SELECT
         COUNT(*) as total,
         SUM(CASE WHEN revoked = 1 THEN 1 ELSE 0 END) as revoked,
         SUM(CASE WHEN expires_at > datetime('now') AND revoked = 0 THEN 1 ELSE 0 END) as active,
         SUM(CASE WHEN expires_at <= datetime('now') AND revoked = 0 THEN 1 ELSE 0 END) as expired
       FROM tokens
-    `).get();
-
-    return stats;
+    `);
+    return stmt.get();
   }
 
   close() {
@@ -231,7 +203,6 @@ async function loadConfig() {
     };
   } catch (err) {
     console.error("[token-lifecycle] Failed to load config:", err.message);
-    console.error("[token-lifecycle] Please ensure mesh-memory.config.local.json exists with token.masterToken");
     process.exit(1);
   }
 }
@@ -243,27 +214,19 @@ async function loadConfig() {
 function createTokenServer(config, db) {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${config.port}`);
-    const startTime = Date.now();
-
-    // Set common headers
     res.setHeader("Content-Type", "application/json");
 
-    // Log request (without sensitive data)
     console.log(`[token-lifecycle] ${req.method} ${url.pathname}`);
 
     try {
-      // Parse request body for POST requests
       let body = {};
       if (req.method === "POST") {
         const chunks = [];
-        for await (const chunk of req) {
-          chunks.push(chunk);
-        }
+        for await (const chunk of req) chunks.push(chunk);
         const bodyText = Buffer.concat(chunks).toString();
         if (bodyText) {
-          try {
-            body = JSON.parse(bodyText);
-          } catch (err) {
+          try { body = JSON.parse(bodyText); }
+          catch (err) {
             res.statusCode = 400;
             res.end(JSON.stringify({ error: "Invalid JSON body" }));
             return;
@@ -271,37 +234,29 @@ function createTokenServer(config, db) {
         }
       }
 
-      // Extract authorization header
       const authHeader = req.headers.authorization || "";
       const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
-      // Route handlers
       switch (url.pathname) {
         case "/mesh/token/issue":
           await handleIssueToken(req, res, body, bearerToken, config, db);
           break;
-
         case "/mesh/token/rotate":
           await handleRotateToken(req, res, body, bearerToken, config, db);
           break;
-
         case "/mesh/token/revoke":
           await handleRevokeToken(req, res, body, bearerToken, config, db);
           break;
-
         case "/mesh/token/validate":
           await handleValidateToken(req, res, body, db);
           break;
-
         case "/mesh/token/stats":
           await handleStats(req, res, bearerToken, config, db);
           break;
-
         case "/health":
           res.statusCode = 200;
           res.end(JSON.stringify({ status: "ok", service: "token-lifecycle" }));
           break;
-
         default:
           res.statusCode = 404;
           res.end(JSON.stringify({ error: "Not found" }));
@@ -311,9 +266,6 @@ function createTokenServer(config, db) {
       res.statusCode = 500;
       res.end(JSON.stringify({ error: "Internal server error" }));
     }
-
-    const duration = Date.now() - startTime;
-    console.log(`[token-lifecycle] Response time: ${duration}ms`);
   });
 
   return server;
@@ -323,12 +275,7 @@ function createTokenServer(config, db) {
 // Route Handlers
 // ============================================================================
 
-/**
- * POST /mesh/token/issue
- * Issue a new ephemeral token (requires master token).
- */
 async function handleIssueToken(req, res, body, bearerToken, config, db) {
-  // Verify master token
   if (!bearerToken || hashToken(bearerToken) !== hashToken(config.masterToken)) {
     res.statusCode = 401;
     res.end(JSON.stringify({ error: "Unauthorized: invalid master token" }));
@@ -347,29 +294,14 @@ async function handleIssueToken(req, res, body, bearerToken, config, db) {
   const tokenHash = hashToken(token);
   const expiresAt = calculateExpiry(ttlHours);
 
-  const record = db.storeToken({
-    peerName,
-    tokenHash,
-    expiresAt,
-    tokenType: "ephemeral",
-  });
+  const record = db.storeToken({ peerName, tokenHash, expiresAt, tokenType: "ephemeral" });
 
-  // Log issuance (token value itself is NOT logged)
-  console.log(`[token-lifecycle] Issued ephemeral token for peer=${peerName}, expires=${expiresAt}`);
+  console.log(`[token-lifecycle] Issued token for peer=${peerName}, expires=${expiresAt}`);
 
   res.statusCode = 200;
-  res.end(JSON.stringify({
-    token,
-    expiresAt,
-    peerName: record.peer_name,
-    issuedAt: record.issued_at,
-  }));
+  res.end(JSON.stringify({ token, expiresAt, peerName: record.peer_name, issuedAt: record.issued_at }));
 }
 
-/**
- * POST /mesh/token/rotate
- * Rotate an ephemeral token (requires valid ephemeral token).
- */
 async function handleRotateToken(req, res, body, bearerToken, config, db) {
   if (!bearerToken) {
     res.statusCode = 401;
@@ -386,11 +318,9 @@ async function handleRotateToken(req, res, body, bearerToken, config, db) {
     return;
   }
 
-  // Revoke old token
   db.revokeToken(oldTokenHash);
   console.log(`[token-lifecycle] Rotated token for peer=${oldTokenRecord.peer_name}`);
 
-  // Issue new token
   const newToken = generateToken();
   const newTokenHash = hashToken(newToken);
   const expiresAt = calculateExpiry(config.ephemeralTokenTtlHours);
@@ -403,20 +333,10 @@ async function handleRotateToken(req, res, body, bearerToken, config, db) {
   });
 
   res.statusCode = 200;
-  res.end(JSON.stringify({
-    token: newToken,
-    expiresAt,
-    peerName: record.peer_name,
-    issuedAt: record.issued_at,
-  }));
+  res.end(JSON.stringify({ token: newToken, expiresAt, peerName: record.peer_name, issuedAt: record.issued_at }));
 }
 
-/**
- * POST /mesh/token/revoke
- * Revoke a token (requires master token).
- */
 async function handleRevokeToken(req, res, body, bearerToken, config, db) {
-  // Verify master token
   if (!bearerToken || hashToken(bearerToken) !== hashToken(config.masterToken)) {
     res.statusCode = 401;
     res.end(JSON.stringify({ error: "Unauthorized: invalid master token" }));
@@ -443,10 +363,6 @@ async function handleRevokeToken(req, res, body, bearerToken, config, db) {
   }
 }
 
-/**
- * POST /mesh/token/validate
- * Validate a token (public endpoint, no auth required).
- */
 async function handleValidateToken(req, res, body, db) {
   const token = body.token;
   if (!token || typeof token !== "string") {
@@ -460,24 +376,14 @@ async function handleValidateToken(req, res, body, db) {
 
   if (record) {
     res.statusCode = 200;
-    res.end(JSON.stringify({
-      valid: true,
-      peerName: record.peer_name,
-      expiresAt: record.expires_at,
-      tokenType: record.token_type,
-    }));
+    res.end(JSON.stringify({ valid: true, peerName: record.peer_name, expiresAt: record.expires_at, tokenType: record.token_type }));
   } else {
     res.statusCode = 200;
     res.end(JSON.stringify({ valid: false }));
   }
 }
 
-/**
- * GET /mesh/token/stats
- * Get token statistics (requires master token).
- */
 async function handleStats(req, res, bearerToken, config, db) {
-  // Verify master token
   if (!bearerToken || hashToken(bearerToken) !== hashToken(config.masterToken)) {
     res.statusCode = 401;
     res.end(JSON.stringify({ error: "Unauthorized" }));
@@ -486,16 +392,11 @@ async function handleStats(req, res, bearerToken, config, db) {
 
   const stats = db.getStats();
   res.statusCode = 200;
-  res.end(JSON.stringify({
-    ...stats,
-    retentionDays: 30,
-    autoRotate: config.autoRotate,
-    rotationIntervalHours: config.rotationIntervalHours,
-  }));
+  res.end(JSON.stringify({ ...stats, retentionDays: 30, autoRotate: config.autoRotate, rotationIntervalHours: config.rotationIntervalHours }));
 }
 
 // ============================================================================
-// Auto-Rotation Background Task
+// Auto-Rotation
 // ============================================================================
 
 function startAutoRotation(config, db) {
@@ -509,62 +410,45 @@ function startAutoRotation(config, db) {
   async function rotationTask() {
     try {
       const tokensToRotate = db.findTokensForRotation(config.rotationIntervalHours);
-
       if (tokensToRotate.length > 0) {
         console.log(`[token-lifecycle] Auto-rotating ${tokensToRotate.length} tokens`);
-
         for (const token of tokensToRotate) {
-          // Revoke old token
           db.revokeToken(token.token_hash);
-
-          // Issue new token (note: we can't auto-distribute the new token,
-          // this would require A2A notification to the peer)
-          console.log(`[token-lifecycle] Auto-rotated token for peer=${token.peer_name}`);
+          console.log(`[token-lifecycle] Rotated token for peer=${token.peer_name}`);
         }
       }
 
-      // Cleanup expired tokens
       const purged = db.purgeExpiredTokens();
-      if (purged > 0) {
-        console.log(`[token-lifecycle] Purged ${purged} expired tokens`);
-      }
+      if (purged > 0) console.log(`[token-lifecycle] Purged ${purged} expired tokens`);
     } catch (err) {
       console.error("[token-lifecycle] Rotation task error:", err);
     }
   }
 
-  // Run immediately, then on interval
   rotationTask();
   setInterval(rotationTask, intervalMs);
-
   console.log(`[token-lifecycle] Auto-rotation enabled (interval: ${config.rotationIntervalHours}h)`);
 }
 
 // ============================================================================
-// Main Entry Point
+// Main
 // ============================================================================
 
 async function main() {
-  console.log("[token-lifecycle] Starting token lifecycle service...");
+  console.log("[token-lifecycle] Starting token lifecycle service v1.1.0...");
 
-  // Ensure directories exist
   await mkdir(dirname(TOKEN_DB_PATH), { recursive: true });
-
-  // Load configuration
   const config = await loadConfig();
 
   if (!config.masterToken) {
     console.error("[token-lifecycle] ERROR: token.masterToken not configured");
-    console.error("[token-lifecycle] Add to mesh-memory.config.local.json:");
-    console.error('  "token": { "masterToken": "' + generateToken() + '" }');
+    console.error('[token-lifecycle] Add to mesh-memory.config.local.json: { "token": { "masterToken": "..." } }');
     process.exit(1);
   }
 
-  // Initialize database
   const db = new TokenDatabase(TOKEN_DB_PATH);
   console.log("[token-lifecycle] Database initialized at", TOKEN_DB_PATH);
 
-  // Create HTTP server
   const server = createTokenServer(config, db);
 
   server.listen(config.port, "127.0.0.1", () => {
@@ -578,24 +462,16 @@ async function main() {
     console.log("  GET  /health             - Health check");
   });
 
-  // Start auto-rotation background task
   startAutoRotation(config, db);
 
-  // Graceful shutdown
   process.on("SIGINT", () => {
     console.log("\n[token-lifecycle] Shutting down...");
-    server.close(() => {
-      db.close();
-      process.exit(0);
-    });
+    server.close(() => { db.close(); process.exit(0); });
   });
 
   process.on("SIGTERM", () => {
     console.log("\n[token-lifecycle] Shutting down...");
-    server.close(() => {
-      db.close();
-      process.exit(0);
-    });
+    server.close(() => { db.close(); process.exit(0); });
   });
 }
 
