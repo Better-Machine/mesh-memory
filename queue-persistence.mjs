@@ -65,12 +65,15 @@ class WALWriter {
           await this.rotate();
         }
 
-        const line = JSON.stringify(entry) + '\n';
+        // P3: Add checksum for corruption detection
+        const checksum = this.calculateChecksum(entry);
+        const entryWithChecksum = { ...entry, _cs: checksum };
+
+        const line = JSON.stringify(entryWithChecksum) + '\n';
         const buffer = Buffer.from(line);
         writeSync(this.fd, buffer);
         
         // P2: Use fdatasyncSync for performance (data only, no metadata)
-        // This is ~20-30% faster than fsyncSync
         const { fdatasyncSync } = await import('fs');
         fdatasyncSync(this.fd);
         
@@ -86,6 +89,17 @@ class WALWriter {
 
   needsRotation() {
     return this.walSize > WAL_MAX_SIZE_MB * 1024 * 1024;
+  }
+
+  /**
+   * P3: Calculate SHA-256 checksum for WAL entry
+   * @param {Object} entry
+   * @returns {string} First 8 chars of SHA-256 hex
+   */
+  calculateChecksum(entry) {
+    const { createHash } = require('crypto');
+    const data = JSON.stringify(entry);
+    return createHash('sha256').update(data).digest('hex').slice(0, 8);
   }
 
   async rotate() {
@@ -302,6 +316,22 @@ async function replayWalAfterSnapshot(afterTimestamp) {
       for (const line of lines) {
         try {
           const entry = JSON.parse(line);
+          
+          // P3: Validate checksum if present
+          if (entry._cs) {
+            const { createHash } = await import('crypto');
+            const { _cs, ...entryWithoutChecksum } = entry;
+            const expectedCs = createHash('sha256')
+              .update(JSON.stringify(entryWithoutChecksum))
+              .digest('hex')
+              .slice(0, 8);
+            
+            if (_cs !== expectedCs) {
+              console.warn(`[queue-persistence] Checksum mismatch, entry may be corrupted: ${line.slice(0, 100)}`);
+              continue; // Skip corrupted entry
+            }
+          }
+          
           if (!afterTimestamp || new Date(entry.timestamp) > new Date(afterTimestamp)) {
             entries.push(entry);
           }
