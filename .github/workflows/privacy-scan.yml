@@ -177,7 +177,7 @@ jobs:
             echo "❌ FAIL: Local filesystem paths found:"
             echo "$HITS"
             echo ""
-            echo "Hardcoded home directory paths (/home/user/) must not appear in committed code."
+            echo "Local filesystem paths with hardcoded usernames must not appear in committed code."
             echo "Use relative paths, environment variables, or config files."
             exit 1
           else
