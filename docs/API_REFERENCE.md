@@ -967,8 +967,8 @@ import { registerPeer } from './src/a2a-integration.mjs';
 
 await registerPeer({
   name: 'Ray',
-  agentCardUrl: 'http://192.168.50.22:18800/.well-known/agent.json',
-  baseUrl: 'http://192.168.50.22:18800',
+  agentCardUrl: 'http://<LAN_IP_RAY>:18800/.well-known/agent.json',
+  baseUrl: 'http://<LAN_IP_RAY>:18800',
   auth: { type: 'bearer', token: process.env.RAY_TOKEN },
   skills: ['mesh-memory', 'a2a-messaging'],
   versions: ['1.0', '2.0'],
@@ -1353,12 +1353,12 @@ onDeliveryStatus((deliveryId, status, details) => {
   "peers": [
     {
       "name": "Ray",
-      "url": "http://192.168.50.22:18800",
+      "url": "http://<LAN_IP_RAY>:18800",
       "token": "${RAY_TOKEN}"
     },
     {
       "name": "Woodhouse",
-      "url": "http://192.168.50.24:18800",
+      "url": "http://<LAN_IP_WOODHOUSE>:18800",
       "token": "${WOODHOUSE_TOKEN}"
     }
   ]

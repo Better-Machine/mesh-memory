@@ -167,7 +167,7 @@ cp mesh-memory.config.json mesh-memory.config.local.json
 nano mesh-memory.config.local.json
 ```
 
-**For Ray (192.168.50.22):**
+**For Ray (<LAN_IP_RAY>):**
 ```json
 {
   "agentId": "Ray",
@@ -179,12 +179,12 @@ nano mesh-memory.config.local.json
   "peers": [
     {
       "name": "Liz",
-      "url": "http://192.168.50.23:18803",
+      "url": "http://<LAN_IP_LIZ>:18803",
       "token": "${LIZ_TOKEN}"
     },
     {
       "name": "Woodhouse",
-      "url": "http://192.168.50.24:18800",
+      "url": "http://<LAN_IP_WOODHOUSE>:18800",
       "token": "${WOODHOUSE_TOKEN}"
     }
   ],
@@ -195,7 +195,7 @@ nano mesh-memory.config.local.json
 }
 ```
 
-**For Woodhouse (192.168.50.24):**
+**For Woodhouse (<LAN_IP_WOODHOUSE>):**
 ```json
 {
   "agentId": "Woodhouse",
@@ -207,12 +207,12 @@ nano mesh-memory.config.local.json
   "peers": [
     {
       "name": "Liz",
-      "url": "http://192.168.50.23:18803",
+      "url": "http://<LAN_IP_LIZ>:18803",
       "token": "${LIZ_TOKEN}"
     },
     {
       "name": "Ray",
-      "url": "http://192.168.50.22:18800",
+      "url": "http://<LAN_IP_RAY>:18800",
       "token": "${RAY_TOKEN}"
     }
   ],
@@ -906,4 +906,4 @@ You've successfully migrated when:
 ---
 
 *Last updated: 2026-04-26*
-*For: Ray (192.168.50.22) and Woodhouse (192.168.50.24)*
+*For: Ray (<LAN_IP_RAY>) and Woodhouse (<LAN_IP_WOODHOUSE>)*

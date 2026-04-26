@@ -83,12 +83,12 @@ nano mesh-memory.config.local.json
   "peers": [
     {
       "name": "Ray",
-      "url": "http://192.168.50.22:18800",
+      "url": "http://<LAN_IP_RAY>:18800",
       "token": "ray-token-here"
     },
     {
       "name": "Woodhouse",
-      "url": "http://192.168.50.24:18800",
+      "url": "http://<LAN_IP_WOODHOUSE>:18800",
       "token": "woodhouse-token-here"
     }
   ]
@@ -135,8 +135,8 @@ async function main() {
   // Register peers (optional, uses openclaw.json if not set)
   await registerPeer({
     name: 'Ray',
-    agentCardUrl: 'http://192.168.50.22:18800/.well-known/agent.json',
-    baseUrl: 'http://192.168.50.22:18800',
+    agentCardUrl: 'http://<LAN_IP_RAY>:18800/.well-known/agent.json',
+    baseUrl: 'http://<LAN_IP_RAY>:18800',
     auth: { type: 'bearer', token: process.env.RAY_TOKEN },
     skills: ['mesh-memory'],
     versions: ['2.0']
@@ -572,8 +572,8 @@ healthCheck().catch(console.error);
 // Option 1: Register explicitly
 await registerPeer({
   name: 'Ray',
-  agentCardUrl: 'http://192.168.50.22:18800/.well-known/agent.json',
-  baseUrl: 'http://192.168.50.22:18800',
+  agentCardUrl: 'http://<LAN_IP_RAY>:18800/.well-known/agent.json',
+  baseUrl: 'http://<LAN_IP_RAY>:18800',
   auth: { type: 'bearer', token: 'token' },
   skills: ['mesh-memory'],
   versions: ['2.0']
@@ -596,7 +596,7 @@ console.log('Circuit state:', state);
 // Wait 60s for cooldown, or check peer health manually
 
 // Verify peer is actually reachable
-curl http://192.168.50.22:18800/health
+curl http://<LAN_IP_RAY>:18800/health
 ```
 
 #### "Governance system not initialized"

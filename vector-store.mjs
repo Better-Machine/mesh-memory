@@ -12,7 +12,7 @@ import { PalaceError, ValidationError, DatabaseError, safeExecute, safeExecuteSy
 import { createLogger, generateCorrelationId } from './palace-logger.mjs';
 
 // GX-10 Nomic endpoint configuration
-const NOMIC_ENDPOINT = 'http://192.168.50.30:8082/embedding';
+const NOMIC_ENDPOINT = 'http://<LAN_IP_GX10>:8082/embedding';
 const VECTOR_DIMENSION = 768; // Nomic embed text dimension
 
 /**
