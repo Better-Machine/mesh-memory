@@ -1,7 +1,7 @@
 # A2A Integration Test Report
 
-**Date:** 2026-04-26T22:16:24.266Z
-**Duration:** 330ms
+**Date:** 2026-04-26T22:22:46.851Z
+**Duration:** 344ms
 
 ## Results
 
@@ -46,13 +46,13 @@
 ### Should update peer health
 - Expected values to be strictly equal:
 
-3 !== 1
+5 !== 1
 
 
 ### Should track failed requests
 - Expected values to be strictly equal:
 
-3 !== 1
+5 !== 1
 
 
 ### Should unregister peer

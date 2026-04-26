@@ -1,0 +1,34 @@
+{
+  "roomId": "dr_7960ba1305eb4784",
+  "purpose": "Withdraw room",
+  "scope": {
+    "topics": [],
+    "documents": [],
+    "maxParticipants": 2
+  },
+  "policy": {
+    "autoClose": null,
+    "consensusRequired": "unanimous",
+    "dataResidency": "us-east-1",
+    "retentionDays": 2555
+  },
+  "state": "ACTIVE",
+  "createdAt": "2026-04-26T22:22:21.904Z",
+  "updatedAt": "2026-04-26T22:22:21.904Z",
+  "participants": [
+    {
+      "agentId": "wd-a@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:22:21.904Z",
+      "status": "active"
+    },
+    {
+      "agentId": "wd-b@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:22:21.904Z",
+      "status": "active"
+    }
+  ],
+  "pendingConsents": [],
+  "activatedAt": "2026-04-26T22:22:21.904Z"
+}

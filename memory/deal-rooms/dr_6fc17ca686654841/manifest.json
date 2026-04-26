@@ -1,0 +1,46 @@
+{
+  "roomId": "dr_6fc17ca686654841",
+  "purpose": "Majority vote room",
+  "scope": {
+    "topics": [],
+    "documents": [],
+    "maxParticipants": 4
+  },
+  "policy": {
+    "autoClose": null,
+    "consensusRequired": "majority",
+    "dataResidency": "us-east-1",
+    "retentionDays": 2555
+  },
+  "state": "ACTIVE",
+  "createdAt": "2026-04-26T22:22:36.657Z",
+  "updatedAt": "2026-04-26T22:22:36.659Z",
+  "participants": [
+    {
+      "agentId": "maj-a@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:22:36.658Z",
+      "status": "active"
+    },
+    {
+      "agentId": "maj-b@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:22:36.658Z",
+      "status": "active"
+    },
+    {
+      "agentId": "maj-c@test.com",
+      "role": "reviewer",
+      "joinedAt": "2026-04-26T22:22:36.659Z",
+      "status": "active"
+    },
+    {
+      "agentId": "maj-d@test.com",
+      "role": "reviewer",
+      "joinedAt": "2026-04-26T22:22:36.659Z",
+      "status": "active"
+    }
+  ],
+  "pendingConsents": [],
+  "activatedAt": "2026-04-26T22:22:36.659Z"
+}

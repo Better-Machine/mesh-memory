@@ -1,0 +1,40 @@
+{
+  "roomId": "dr_19290deeb1aa43f0",
+  "purpose": "Unanimous reject room",
+  "scope": {
+    "topics": [],
+    "documents": [],
+    "maxParticipants": 3
+  },
+  "policy": {
+    "autoClose": null,
+    "consensusRequired": "unanimous",
+    "dataResidency": "us-east-1",
+    "retentionDays": 2555
+  },
+  "state": "ACTIVE",
+  "createdAt": "2026-04-26T22:22:21.893Z",
+  "updatedAt": "2026-04-26T22:22:21.894Z",
+  "participants": [
+    {
+      "agentId": "ur-a@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:22:21.893Z",
+      "status": "active"
+    },
+    {
+      "agentId": "ur-b@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:22:21.893Z",
+      "status": "active"
+    },
+    {
+      "agentId": "ur-c@test.com",
+      "role": "reviewer",
+      "joinedAt": "2026-04-26T22:22:21.894Z",
+      "status": "active"
+    }
+  ],
+  "pendingConsents": [],
+  "activatedAt": "2026-04-26T22:22:21.894Z"
+}

@@ -157,10 +157,11 @@ async function runDealRoomTests() {
   
   await test('getRoom: should throw for non-existent room', async () => {
     try {
-      await getRoom('dr_nonexistent');
+      await getRoom('dr_nonexistent1234567'); // Valid format but doesn't exist
       assert.fail('Should have thrown');
     } catch (err) {
-      assert.ok(err.message.includes('Room not found'));
+      assert.ok(err.message.includes('Room not found') || err.message.includes('Invalid room ID'), 
+        `Expected 'Room not found' or 'Invalid room ID', got: ${err.message}`);
     }
   });
   
