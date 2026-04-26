@@ -18,8 +18,8 @@ import { loadConfig } from '../config.mjs';
 import { SQLiteRepository } from './db/repository-base.mjs';
 import { CircuitBreaker } from './circuit-breaker.mjs';
 
-// Re-export CircuitState for backward compatibility
-export { CircuitState } from './circuit-breaker.mjs';
+// Re-export CircuitState and DeliveryStatus for backward compatibility
+export { CircuitState, DeliveryStatus } from './circuit-breaker.mjs';
 
 // Config and paths
 let config = null;
@@ -30,14 +30,6 @@ let repository = null;
 
 // Circuit breaker registry
 const circuitBreakers = new Map();
-
-// Delivery status enum
-export const DeliveryStatus = {
-  PENDING: 'pending',
-  DELIVERED: 'delivered',
-  FAILED: 'failed',
-  DEAD_LETTER: 'dead_letter'
-};
 
 // Event listeners
 const statusListeners = new Set();
