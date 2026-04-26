@@ -1,0 +1,24 @@
+{
+  "id": "policy-deal-room-founder",
+  "name": "Deal Room Founder Access",
+  "description": "Full access to deal rooms for founders and system administrators",
+  "version": 1,
+  "priority": 100,
+  "rules": [
+    {
+      "effect": "allow",
+      "principal": { "role": "founder" },
+      "action": ["create", "read", "update", "delete", "invite", "close"],
+      "resource": "deal-room:*"
+    },
+    {
+      "effect": "allow",
+      "principal": { "role": "admin" },
+      "action": ["create", "read", "update", "delete", "audit"],
+      "resource": "deal-room:*"
+    }
+  ],
+  "isActive": true,
+  "createdBy": "system",
+  "createdAt": "2026-04-26T00:00:00Z"
+}
