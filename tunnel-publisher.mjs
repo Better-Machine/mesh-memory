@@ -145,11 +145,11 @@ export function validateFact(fact) {
 
   // Validate content structure
   if (fact.content) {
-    const contentBody = typeof fact.content === "string" 
+    const contentToCheck = typeof fact.content === "string" 
       ? fact.content 
-      : fact.content.body || "";
+      : [fact.content.title || "", fact.content.body || ""].join(" ");
     
-    if (containsInterpretationKeywords(contentBody)) {
+    if (containsInterpretationKeywords(contentToCheck)) {
       errors.push("Content contains interpretation keywords (believes, thinks, probably, etc.)");
     }
   }
