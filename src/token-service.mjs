@@ -21,6 +21,7 @@ import { promisify } from 'util';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, existsSync, mkdirSync } from 'fs';
+import { LRUCache } from 'lru-cache';
 import { loadConfig } from './config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -53,7 +54,14 @@ class TokenService {
   constructor(configPath = null) {
     this.config = new Config();
     this.db = null;
-    this.revocationCache = new Set();
+    // FIX: Priority 1 - Unbounded Revocation Cache
+    // Use LRU cache with max 10K entries, 24h TTL to prevent unbounded growth
+    this.revocationCache = new LRUCache({
+      max: 10000,
+      ttl: 24 * 60 * 60 * 1000, // 24 hours
+      updateAgeOnGet: true,
+      allowStale: false
+    });
     this.backgroundRotationTimer = null;
     this.isShuttingDown = false;
     
@@ -117,7 +125,7 @@ class TokenService {
     
     this.revocationCache.clear();
     for (const row of revokedTokens) {
-      this.revocationCache.add(row.token);
+      this.revocationCache.set(row.token, true);
     }
     
     console.log(`Loaded ${this.revocationCache.size} revoked tokens into cache`);
@@ -219,7 +227,7 @@ class TokenService {
           await this.db.run('COMMIT');
           
           // Update cache after successful commit
-          this.revocationCache.add(oldToken);
+          this.revocationCache.set(oldToken, true);
           
           console.log(`Rotated token for peer: ${oldTokenRecord.peerName}`);
           
@@ -250,7 +258,7 @@ class TokenService {
     );
     
     if (result.changes > 0) {
-      this.revocationCache.add(token);
+      this.revocationCache.set(token, true);
       console.log(`Revoked token`);
       // Note: token itself is NOT logged for security
       return true;
@@ -268,7 +276,8 @@ class TokenService {
     }
     
     // Check cache first for fast rejection of known revoked tokens
-    if (this.revocationCache.has(token)) {
+    // LRUCache.get() returns undefined if not found or expired
+    if (this.revocationCache.get(token) !== undefined) {
       return false;
     }
     
@@ -283,7 +292,7 @@ class TokenService {
     }
     
     // Double-check cache after DB query to catch race conditions
-    if (this.revocationCache.has(token)) {
+    if (this.revocationCache.get(token) !== undefined) {
       return false;
     }
     
@@ -309,7 +318,7 @@ class TokenService {
     
     const now = Date.now();
     const isExpired = tokenRecord.expiresAt < now;
-    const isRevoked = tokenRecord.revoked === 1 || this.revocationCache.has(token);
+    const isRevoked = tokenRecord.revoked === 1 || this.revocationCache.get(token) !== undefined;
     
     return {
       peerName: tokenRecord.peerName,
@@ -336,7 +345,7 @@ class TokenService {
       issuedAt: new Date(token.issuedAt).toISOString(),
       expiresAt: new Date(token.expiresAt).toISOString(),
       isExpired: token.expiresAt < now,
-      isRevoked: token.revoked === 1 || this.revocationCache.has(token.token)
+      isRevoked: token.revoked === 1 || this.revocationCache.get(token.token) !== undefined
     }));
   }
 
@@ -360,30 +369,48 @@ class TokenService {
 
   /**
    * Automatic token rotation for tokens nearing expiry
+   * FIX: Priority 2 - O(n) Token Rotation Scan
+   * Process in batches of 100 to avoid blocking and memory issues
    */
   async performAutoRotation() {
     const now = Date.now();
     const rotationThreshold = now + (this.ROTATION_BUFFER_HOURS * 60 * 60 * 1000);
     
-    // Find tokens that will expire within the rotation buffer
-    const tokensToRotate = await this.db.all(
-      'SELECT token, peerName FROM tokens WHERE expiresAt < ? AND revoked = 0',
-      [rotationThreshold]
-    );
+    let totalRotated = 0;
+    let hasMore = true;
     
-    if (tokensToRotate.length === 0) {
-      return;
+    while (hasMore) {
+      // Find tokens that will expire within the rotation buffer (batch of 100)
+      const tokensToRotate = await this.db.all(
+        'SELECT token, peerName FROM tokens WHERE expiresAt < ? AND revoked = 0 LIMIT 100',
+        [rotationThreshold]
+      );
+      
+      if (tokensToRotate.length === 0) {
+        hasMore = false;
+        break;
+      }
+      
+      console.log(`Processing batch of ${tokensToRotate.length} tokens for auto-rotation`);
+      
+      for (const tokenRecord of tokensToRotate) {
+        try {
+          await this.rotateToken(tokenRecord.token);
+          totalRotated++;
+          console.log(`Auto-rotated token for peer: ${tokenRecord.peerName}`);
+        } catch (error) {
+          console.error(`Failed to auto-rotate token for peer ${tokenRecord.peerName}:`, error.message);
+        }
+      }
+      
+      // If we processed fewer than 100, we're done
+      if (tokensToRotate.length < 100) {
+        hasMore = false;
+      }
     }
     
-    console.log(`Auto-rotating ${tokensToRotate.length} tokens nearing expiry`);
-    
-    for (const tokenRecord of tokensToRotate) {
-      try {
-        await this.rotateToken(tokenRecord.token);
-        console.log(`Auto-rotated token for peer: ${tokenRecord.peerName}`);
-      } catch (error) {
-        console.error(`Failed to auto-rotate token for peer ${tokenRecord.peerName}:`, error.message);
-      }
+    if (totalRotated > 0) {
+      console.log(`Auto-rotated ${totalRotated} tokens total`);
     }
   }
 
