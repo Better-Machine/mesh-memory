@@ -1,0 +1,21 @@
+{
+  "id": "policy-critical-operations",
+  "name": "Critical Operations Consensus Requirement",
+  "description": "Requires multi-agent consensus for critical deal room operations",
+  "version": 1,
+  "priority": 95,
+  "rules": [
+    {
+      "effect": "escalate",
+      "principal": { "role": ["negotiator", "reviewer", "founder"] },
+      "action": ["commit", "close", "policy_change"],
+      "resource": "deal-room:*",
+      "condition": {
+        "context.requires_consensus": true
+      }
+    }
+  ],
+  "isActive": true,
+  "createdBy": "system",
+  "createdAt": "2026-04-26T00:00:00Z"
+}

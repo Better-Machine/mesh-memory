@@ -27,9 +27,9 @@ function hashToken(token) {
 /**
  * Make HTTP request to test server
  */
-function makeRequest(method, path, body = null, authToken = null) {
+async function makeRequest(method, path, body = null, authToken = null) {
+  const { request } = await import("node:http");
   return new Promise((resolve, reject) => {
-    const { request } = await import("node:http");
     const options = {
       hostname: "127.0.0.1",
       port: TEST_PORT,

@@ -1,0 +1,28 @@
+{
+  "id": "policy-deal-room-negotiator",
+  "name": "Deal Room Negotiator Access",
+  "description": "Standard access for negotiators - can propose and vote during business hours",
+  "version": 1,
+  "priority": 90,
+  "rules": [
+    {
+      "effect": "allow",
+      "principal": { "role": "negotiator" },
+      "action": ["read", "propose", "vote"],
+      "resource": "deal-room:*",
+      "condition": {
+        "time_of_day": "09:00-18:00",
+        "agent.device_trust": { "operator": ">=", "value": 0.7 }
+      }
+    },
+    {
+      "effect": "deny",
+      "principal": { "role": "negotiator" },
+      "action": "delete",
+      "resource": "deal-room:*"
+    }
+  ],
+  "isActive": true,
+  "createdBy": "system",
+  "createdAt": "2026-04-26T00:00:00Z"
+}

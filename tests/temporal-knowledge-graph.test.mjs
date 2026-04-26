@@ -64,7 +64,10 @@ let testRoomCounter = 0;
 
 function getUniqueRoomId(baseName) {
   testRoomCounter++;
-  return `${baseName}_${Date.now()}_${testRoomCounter}`;
+  // Generate UUID-like suffix (16 chars) to match dr_[a-zA-Z0-9]{16} format
+  const suffix = Math.random().toString(36).substring(2, 10) + 
+                 Math.random().toString(36).substring(2, 10);
+  return `dr_${suffix}`;
 }
 
 async function createTestRoom(roomId) {

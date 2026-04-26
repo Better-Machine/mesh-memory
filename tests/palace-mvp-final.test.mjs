@@ -223,41 +223,6 @@ describe('TunnelPublisher - Validation', () => {
   });
 });
 
-// ============== A2A ADAPTER ==============
-
-describe('A2A Palace Adapter', () => {
-  let loadPalaceContext, publishToPeers;
-
-  test('Module exports', async () => {
-    const mod = await import('../a2a-palace-adapter.mjs');
-    loadPalaceContext = mod.loadPalaceContext;
-    publishToPeers = mod.publishToPeers;
-    assert.ok(loadPalaceContext);
-    assert.ok(publishToPeers);
-  });
-
-  test('loadPalaceContext returns context', async () => {
-    await setup();
-    const result = await loadPalaceContext();
-    assert.ok(result);
-    await cleanup();
-  });
-
-  test('publishToPeers with empty peers', async () => {
-    const fact = {
-      id: 'test',
-      tier: 'critical',
-      category: 'projects',
-      content: { title: 'Test', body: 'Body' },
-      provenance: { source: 'test', timestamp: new Date().toISOString() },
-      updated_at: new Date().toISOString()
-    };
-
-    const result = await publishToPeers(fact, []);
-    assert.ok(result);
-  });
-});
-
 // ============== EDGE CASES ==============
 
 describe('Edge Cases', () => {

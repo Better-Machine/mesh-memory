@@ -9,6 +9,7 @@ import { openSync, writeSync, fsyncSync, closeSync } from 'fs';
 import { join, basename, resolve } from 'path';
 import { createHash } from 'crypto';
 import { loadConfig } from './config.mjs';
+import { getBackpressureController } from './backpressure.mjs';
 
 // Config will be loaded on initialization
 let config = null;
@@ -34,6 +35,15 @@ let walWriteStream = null;
 let walRotationTimer = null;
 let snapshotTimer = null;
 
+// Batch fsync configuration
+const BATCH_FSYNC_CONFIG = {
+  maxEntriesBeforeFsync: 100,
+  maxMsBeforeFsync: 100,
+  pendingFsync: false
+};
+let lastFsyncTime = Date.now();
+let entriesSinceFsync = 0;
+
 // WAL Write Queue - Phase 3 fix for race condition
 class WALWriter {
   constructor() {
@@ -45,6 +55,9 @@ class WALWriter {
     this.walSize = 0;
     this.shutdownRequested = false;  // P3: Track shutdown state
     this.shutdownPromise = null;       // P3: Prevent multiple shutdowns
+    this.lastFsyncTime = Date.now();
+    this.entriesSinceFsync = 0;
+    this.pendingFsync = false;
   }
 
   async write(entry) {
@@ -52,6 +65,18 @@ class WALWriter {
     if (this.shutdownRequested) {
       return Promise.reject(new Error('WALWriter is shutting down'));
     }
+    
+    // Performance: Check backpressure before accepting write
+    try {
+      const bp = getBackpressureController();
+      if (!bp.checkWALBackpressure()) {
+        return Promise.reject(new Error('WAL queue at capacity'));
+      }
+      bp.incrementWALQueue();
+    } catch (e) {
+      // Backpressure controller not initialized, continue anyway
+    }
+    
     return new Promise((resolve, reject) => {
       this.queue.push({ entry, resolve, reject });
       this.process();
@@ -79,11 +104,31 @@ class WALWriter {
         const buffer = Buffer.from(line);
         writeSync(this.fd, buffer);
         
-        // P2: Use fdatasyncSync for performance (data only, no metadata)
-        const { fdatasyncSync } = await import('fs');
-        fdatasyncSync(this.fd);
-        
+        // Performance: Batch fsync instead of every write
+        this.entriesSinceFsync++;
         this.walSize += buffer.length;
+        
+        const now = Date.now();
+        const shouldFsync = (
+          this.entriesSinceFsync >= BATCH_FSYNC_CONFIG.maxEntriesBeforeFsync ||
+          now - this.lastFsyncTime >= BATCH_FSYNC_CONFIG.maxMsBeforeFsync
+        );
+        
+        if (shouldFsync) {
+          const { fdatasyncSync } = await import('fs');
+          fdatasyncSync(this.fd);
+          this.lastFsyncTime = now;
+          this.entriesSinceFsync = 0;
+        }
+        
+        // Notify backpressure of processed entry
+        try {
+          const bp = getBackpressureController();
+          bp.decrementWALQueue();
+        } catch (e) {
+          // Backpressure controller not initialized
+        }
+        
         resolve();
       } catch (err) {
         reject(err);
@@ -91,6 +136,18 @@ class WALWriter {
     }
 
     this.processing = false;
+    
+    // Final fsync after batch completes
+    if (this.entriesSinceFsync > 0 && this.fd !== null) {
+      try {
+        const { fdatasyncSync } = await import('fs');
+        fdatasyncSync(this.fd);
+        this.lastFsyncTime = Date.now();
+        this.entriesSinceFsync = 0;
+      } catch (e) {
+        // fd may be closed, ignore
+      }
+    }
   }
 
   needsRotation() {
@@ -115,6 +172,7 @@ class WALWriter {
       fdatasyncSync(this.fd);
       closeSync(this.fd);
       this.fd = null;
+      this.entriesSinceFsync = 0;
     }
 
     // Generate new WAL file name
@@ -249,6 +307,10 @@ export async function initializeQueuePersistence() {
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_peer_status ON queue_entries(peerName, status)`);
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_event_id ON queue_entries(eventId)`);
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_timestamp ON queue_entries(timestamp)`);
+    
+    // NEW: Performance indexes
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_queue_peer_status_time ON queue_entries(peerName, status, timestamp)`);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_queue_status_time ON queue_entries(status, timestamp)`);
     
     // Load and reconstruct queue state
     const reconstructedState = await reconstructQueueState();
@@ -403,6 +465,7 @@ async function getWalFiles() {
 
 /**
  * Sync SQLite index with reconstructed state
+ * PERFORMANCE FIX: Use bulk insert instead of N+1 queries
  * @param {Map<string, any[]>} state - Reconstructed queue state
  */
 async function syncIndexWithState(state) {
@@ -412,23 +475,37 @@ async function syncIndexWithState(state) {
     // Clear existing pending entries
     await db.run("DELETE FROM queue_entries WHERE status = 'pending'");
     
-    // Insert pending events from state
+    // Collect all events for bulk insert
+    const allEntries = [];
     for (const [peerName, events] of state) {
       for (const event of events) {
         const eventId = generateEventId(event);
-        const exists = await db.get(
-          'SELECT id FROM queue_entries WHERE eventId = ?',
-          [eventId]
-        );
-        
-        if (!exists) {
-          await db.run(
-            `INSERT INTO queue_entries (peerName, eventId, timestamp, status, eventData) 
-             VALUES (?, ?, ?, 'pending', ?)`,
-            [peerName, eventId, event.timestamp, JSON.stringify(event)]
-          );
-        }
+        allEntries.push({
+          peerName,
+          eventId,
+          timestamp: event.timestamp,
+          eventData: JSON.stringify(event)
+        });
       }
+    }
+    
+    // Performance: Bulk insert with prepared statement
+    if (allEntries.length > 0) {
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < allEntries.length; i += BATCH_SIZE) {
+        const batch = allEntries.slice(i, i + BATCH_SIZE);
+        
+        // Build multi-value insert
+        const placeholders = batch.map(() => '(?, ?, ?, ?, ?)').join(', ');
+        const values = batch.flatMap(e => [e.peerName, e.eventId, e.timestamp, 'pending', e.eventData]);
+        
+        await db.run(
+          `INSERT INTO queue_entries (peerName, eventId, timestamp, status, eventData) VALUES ${placeholders}`,
+          values
+        );
+      }
+      
+      console.log(`[queue-persistence] Bulk inserted ${allEntries.length} entries`);
     }
   } catch (error) {
     console.error('[queue-persistence] Failed to sync index:', error);

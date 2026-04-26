@@ -1,0 +1,27 @@
+{
+  "id": "policy-deal-room-reviewer",
+  "name": "Deal Room Reviewer Access",
+  "description": "Read-only access for reviewers with elevated clearance",
+  "version": 1,
+  "priority": 80,
+  "rules": [
+    {
+      "effect": "allow",
+      "principal": { 
+        "role": "reviewer",
+        "clearance_level": { "operator": ">=", "value": 2 }
+      },
+      "action": ["read", "comment"],
+      "resource": "deal-room:*"
+    },
+    {
+      "effect": "escalate",
+      "principal": { "role": "reviewer" },
+      "action": ["propose", "vote"],
+      "resource": "deal-room:*"
+    }
+  ],
+  "isActive": true,
+  "createdBy": "system",
+  "createdAt": "2026-04-26T00:00:00Z"
+}

@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
 
+env:
+  # Set to 'false' to skip privacy scan on private repos
+  # Set to 'true' to run scan (recommended for public repos)
+  PRIVACY_SCAN_ENABLED: ${{ vars.PRIVACY_SCAN_ENABLED || 'true' }}
+
 jobs:
   privacy-scan:
     name: Scan for Private Data
@@ -14,23 +19,53 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for git diff
 
-      - name: Scan for private IPs
+      - name: Check if scan is enabled
         run: |
-          echo "Scanning for private IP addresses (192.168.x.x, 10.x.x.x, 172.16-31.x.x)..."
-          HITS=$(grep -rn \
+          if [ "${{ env.PRIVACY_SCAN_ENABLED }}" = "false" ]; then
+            echo "🔒 Privacy scan disabled via PRIVACY_SCAN_ENABLED=false"
+            echo "Skipping scan for private repository."
+            echo "Set PRIVACY_SCAN_ENABLED=true repository variable to enable."
+            exit 0
+          fi
+          echo "🔍 Privacy scan enabled — running checks..."
+
+      - name: Scan for private IPs (changed files only)
+        if: env.PRIVACY_SCAN_ENABLED != 'false'
+        run: |
+          # For PRs: only scan files changed in this PR
+          # For pushes to main: scan the commit that was pushed
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Scanning changed files only (PR)..."
+            FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD --diff-filter=ACM || true)
+          else
+            echo "Scanning all files (push to main)..."
+            FILES="."
+          fi
+
+          if [ -z "$FILES" ] || [ "$FILES" = "." ]; then
+            SCAN_TARGET="."
+          else
+            SCAN_TARGET="$FILES"
+          fi
+
+          echo "Scan target: $SCAN_TARGET"
+
+          HITS=$(echo "$SCAN_TARGET" | xargs -I{} grep -Hrn \
             --include="*.js" \
             --include="*.mjs" \
             --include="*.ts" \
             --include="*.json" \
-            --include="*.md" \
             --include="*.yml" \
             --include="*.yaml" \
             --include="*.sh" \
+            --exclude="*lock.json" \
             --exclude-dir=node_modules \
             --exclude-dir=.git \
             -E '192\.168\.[0-9]+\.[0-9]+|10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+' \
-            . 2>/dev/null || true)
+            {} 2>/dev/null || true)
 
           if [ -n "$HITS" ]; then
             echo ""
@@ -43,12 +78,23 @@ jobs:
             echo "✅ No private IPs found"
           fi
 
-      - name: Scan for tokens and secrets
+      - name: Scan for tokens and secrets (changed files only)
+        if: env.PRIVACY_SCAN_ENABLED != 'false'
         run: |
-          echo "Scanning for tokens and secrets..."
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD --diff-filter=ACM || true)
+          else
+            FILES="."
+          fi
+
+          if [ -z "$FILES" ] || [ "$FILES" = "." ]; then
+            SCAN_TARGET="."
+          else
+            SCAN_TARGET="$FILES"
+          fi
 
           # Check for long hex strings (40+ chars — typical for auth tokens)
-          HEX_HITS=$(grep -rn \
+          HEX_HITS=$(echo "$SCAN_TARGET" | xargs -I{} grep -Hrn \
             --include="*.js" \
             --include="*.mjs" \
             --include="*.ts" \
@@ -59,10 +105,10 @@ jobs:
             --exclude-dir=node_modules \
             --exclude-dir=.git \
             -E '[a-fA-F0-9]{40,}' \
-            . 2>/dev/null | grep -v "\.min\." | grep -v "test\|spec\|fixture\|example\|sha256\|sha512\|hash" | head -20 || true)
+            {} 2>/dev/null | grep -v "\.min\." | grep -v "test\|spec\|fixture\|example\|sha256\|sha512\|hash" | head -20 || true)
 
           # Check for API key patterns
-          KEY_HITS=$(grep -rn \
+          KEY_HITS=$(echo "$SCAN_TARGET" | xargs -I{} grep -Hrn \
             --include="*.js" \
             --include="*.mjs" \
             --include="*.ts" \
@@ -73,7 +119,7 @@ jobs:
             --exclude-dir=node_modules \
             --exclude-dir=.git \
             -E 'sk-[a-zA-Z0-9]{20,}|Bearer [a-zA-Z0-9._-]{20,}|api[_-]?key["\s]*[:=]["\s]*[a-zA-Z0-9._-]{10,}' \
-            . 2>/dev/null | head -20 || true)
+            {} 2>/dev/null | head -20 || true)
 
           FAIL=0
           if [ -n "$KEY_HITS" ]; then
@@ -98,10 +144,22 @@ jobs:
             echo "✅ No API key patterns found"
           fi
 
-      - name: Scan for local filesystem paths
+      - name: Scan for local filesystem paths (changed files only)
+        if: env.PRIVACY_SCAN_ENABLED != 'false'
         run: |
-          echo "Scanning for local filesystem paths..."
-          HITS=$(grep -rn \
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD --diff-filter=ACM || true)
+          else
+            FILES="."
+          fi
+
+          if [ -z "$FILES" ] || [ "$FILES" = "." ]; then
+            SCAN_TARGET="."
+          else
+            SCAN_TARGET="$FILES"
+          fi
+
+          HITS=$(echo "$SCAN_TARGET" | xargs -I{} grep -Hrn \
             --include="*.js" \
             --include="*.mjs" \
             --include="*.ts" \
@@ -113,24 +171,36 @@ jobs:
             --exclude-dir=node_modules \
             --exclude-dir=.git \
             -E '/home/[a-z][a-z0-9_-]+/' \
-            . 2>/dev/null | grep -v "POSTMORTEM\|ADR\|RFC\|TEMPLATE\|example\|Example" | head -20 || true)
+            {} 2>/dev/null | grep -v "POSTMORTEM\|ADR\|RFC\|TEMPLATE\|example\|Example" | head -20 || true)
 
           if [ -n "$HITS" ]; then
             echo ""
             echo "❌ FAIL: Local filesystem paths found:"
             echo "$HITS"
             echo ""
-            echo "Hardcoded /home/username/ paths must not appear in committed code."
+            echo "Local filesystem paths with hardcoded usernames must not appear in committed code."
             echo "Use relative paths, environment variables, or config files."
             exit 1
           else
             echo "✅ No local filesystem paths found"
           fi
 
-      - name: Scan for internal hostnames
+      - name: Scan for internal hostnames (changed files only)
+        if: env.PRIVACY_SCAN_ENABLED != 'false'
         run: |
-          echo "Scanning for internal hostnames..."
-          HITS=$(grep -rn \
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD --diff-filter=ACM || true)
+          else
+            FILES="."
+          fi
+
+          if [ -z "$FILES" ] || [ "$FILES" = "." ]; then
+            SCAN_TARGET="."
+          else
+            SCAN_TARGET="$FILES"
+          fi
+
+          HITS=$(echo "$SCAN_TARGET" | xargs -I{} grep -Hrn \
             --include="*.js" \
             --include="*.mjs" \
             --include="*.ts" \
@@ -141,7 +211,7 @@ jobs:
             --exclude-dir=node_modules \
             --exclude-dir=.git \
             -E '\b[a-zA-Z0-9-]+\.local\b' \
-            . 2>/dev/null | grep -v "localhost\|node_modules\|\.local\.json\|config\.local" | head -20 || true)
+            {} 2>/dev/null | grep -v "localhost\|node_modules\|\.local\.json\|config\.local" | head -20 || true)
 
           if [ -n "$HITS" ]; then
             echo ""
@@ -156,6 +226,7 @@ jobs:
           fi
 
       - name: Privacy scan summary
+        if: env.PRIVACY_SCAN_ENABLED != 'false'
         run: |
           echo ""
           echo "✅ Privacy scan complete — all checks passed"

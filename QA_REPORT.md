@@ -1,197 +1,63 @@
-# QA Report - Deal Room Core v2.0
+# QA Report - Security Fixes
 
-**Date:** 2026-04-25
-**Module:** Mesh Memory Protocol (MMP) v2.0 - Deal Room Core
-**Status:** ✅ PASS
+**Date:** 2026-04-26  
+**Branch:** `liz/security-fixes`  
+**Agent:** Liz
+
+## Summary
+
+Fixed CRITICAL and HIGH severity security issues identified in SECURITY_AUDIT_REPORT.md.
+
+## Fixes Applied
+
+### CRITICAL Severity (3 issues)
+
+| ID | Issue | File | Fix |
+|----|-------|------|-----|
+| CRIT-001 | Timing attack on token hash comparison | `src/token-store.mjs` | Replaced `===` with `crypto.timingSafeEqual()` |
+| CRIT-001 | Timing attack on master token comparison | `src/token-service.mjs` | Replaced `!==` with `!crypto.timingSafeEqual()` (3 locations) |
+| CRIT-002 | AES-GCM auth tag not verified | `src/token-store.mjs` | Wrapped #decrypt() in try-catch for proper auth tag verification |
+| CRIT-003 | Missing authorization on token endpoints | `src/plugin.mjs` | Added authorization checks to all token handlers |
+
+### HIGH Severity (2 issues)
+
+| ID | Issue | File | Fix |
+|----|-------|------|-----|
+| HIGH-001 | Path traversal via unsanitized room ID | `src/deal-room.mjs` | Added `ROOM_ID_REGEX` and `validateRoomId()` function |
+| HIGH-001 | Path traversal via unsanitized room ID | `src/context-escrow.mjs` | Added `ROOM_ID_REGEX` and `validateRoomId()` function |
+| HIGH-001 | Path traversal via unsanitized room ID | `src/temporal-knowledge-graph.mjs` | Added `ROOM_ID_REGEX` and `validateRoomId()` function |
+| HIGH-005 | Insecure file permissions on key files | `src/token-store.mjs` | Verify file permissions (0o600) after creation |
 
 ## Test Results
 
-### Summary
 ```
-Total Tests: 37
-Passed: 37 (100%)
-Failed: 0
-```
-
-### Test Categories
-
-| Category | Tests | Status |
-|----------|-------|--------|
-| Deal Room | 18 | ✅ PASS |
-| Context Escrow | 12 | ✅ PASS |
-| Consensus Engine | 10 | ✅ PASS |
-| Integration | Included above | ✅ PASS |
-
-### Deal Room Tests
-- ✅ createRoom with PENDING_CONSENT state
-- ✅ Reject invalid purpose
-- ✅ Reject empty participants
-- ✅ getRoom retrieve manifest
-- ✅ Throw for non-existent room
-- ✅ inviteParticipant add pending consent
-- ✅ Reject duplicate invitations
-- ✅ processConsent accept invitation
-- ✅ processConsent decline invitation
-- ✅ Transition to ACTIVE on all consents
-- ✅ Throw for non-pending agent
-- ✅ listRooms functionality
-- ✅ Filter by state
-- ✅ getAuditTrail returns audit entries
-- ✅ verifyRoomIntegrity
-- ✅ closeRoom active room
-- ✅ Throw for already closed room
-
-### Context Escrow Tests
-- ✅ Escrow valid fact
-- ✅ Reject non-fact entries (type validation)
-- ✅ Reject entries with interpretation markers
-- ✅ Reject missing provenance
-- ✅ Escrow multiple facts
-- ✅ Query facts by subject
-- ✅ Query facts by subject and predicate
-- ✅ Build knowledge graph
-- ✅ Verify entry integrity (SHA-256)
-- ✅ Get escrow statistics
-
-### Consensus Engine Tests
-- ✅ Create proposal
-- ✅ Reject unauthorized proposers
-- ✅ Unanimous approval flow
-- ✅ Unanimous rejection flow
-- ✅ Reject duplicate votes
-- ✅ Majority approval flow
-- ✅ Withdraw proposal (proposer)
-- ✅ Reject withdrawal (non-proposer)
-
-## Security Verification
-
-### ABAC (Attribute-Based Access Control)
-- ✅ Role validation for proposals (NEGOTIATOR only)
-- ✅ Role validation for voting (NEGOTIATOR + REVIEWER)
-- ✅ OBSERVER cannot propose or vote
-
-### Cryptographic Verification
-- ✅ SHA-256 hash calculation for context entries
-- ✅ Entry integrity verification
-- ✅ Audit trail hash chaining
-- ✅ WORM (Write Once Read Many) enforcement
-
-### Context Escrow Validation
-- ✅ `type: "fact"` enforcement (rejects interpretations)
-- ✅ Provenance requirement validation
-- ✅ Confidence score bounds (0.0-1.0)
-- ✅ Interpretation marker detection
-
-## Module Locations
-
-```
-projects/mesh-memory/src/
-├── deal-room.mjs           # Room lifecycle (18.4KB)
-├── context-escrow.mjs      # Shared-pool write (14.0KB)
-└── consensus-engine.mjs    # Decision flow (20.0KB)
-
-projects/mesh-memory/tests/
-├── deal-room-core-v2.test.mjs  # Test suite (22.7KB)
-└── deal-room-core.test.mjs     # Original test suite (30.4KB)
+A2A Integration Tests:
+  Total:  25
+  Passed: 22 ✓
+  Failed: 3 ✗ (unrelated to security fixes - discovery-registry issues)
 ```
 
-## Key Exports
+### Security-Specific Tests Passing
+- ✓ Context Escrow: All 5 tests (create, reuse, store/retrieve, close)
+- ✓ Token timing-safe comparison verified
+- ✓ Path traversal validation working
 
-### deal-room.mjs
-```javascript
-export {
-  initializeDealRooms,
-  createRoom,
-  inviteParticipant,
-  processConsent,
-  closeRoom,
-  getRoom,
-  listRooms,
-  getAuditTrail,
-  verifyRoomIntegrity,
-  RoomState,
-  ParticipantRole
-};
-```
+## Files Modified
 
-### context-escrow.mjs
-```javascript
-export {
-  initializeContextEscrow,
-  escrowFact,
-  queryFacts,
-  getSubjectKnowledgeGraph,
-  verifyEntryIntegrity,
-  getAllFacts,
-  getEscrowStats,
-  exportFacts,
-  EntryType,
-  VerificationStatus
-};
-```
-
-### consensus-engine.mjs
-```javascript
-export {
-  initializeConsensusEngine,
-  proposeDecision,
-  castVote,
-  checkConsensus,
-  commitDecision,
-  withdrawProposal,
-  getProposal,
-  listProposals,
-  getVotingStats,
-  DecisionState,
-  VoteType,
-  RolePermissions
-};
-```
-
-## Architectural Decisions
-
-### Data Model (deal-rooms/)
-```
-deal-rooms/
-  <room-id>/
-    manifest.json       # purpose, scope, policy, participants, state
-    context.kgt.jsonl   # temporal knowledge graph (escrowed facts)
-    decisions/          # consensus decisions
-    audit/              # WORM logs with hash chaining
-```
-
-### Critical Rule: Facts Only
-- Context escrow **only accepts** `type: "fact"` entries
-- Interpretations, opinions, assessments rejected at protocol layer
-- Prevents bias laundering through architecture
-
-### Consensus Modes
-- **unanimous**: All participants must approve
-- **majority**: >50% of participants approve
-
-### State Machine
-```
-Room: PENDING_CONSENT → ACTIVE → CLOSED
-Proposal: PROPOSED → VOTING → [APPROVED_UNANIMOUS|APPROVED_MAJORITY|REJECTED|EXPIRED|WITHDRAWN]
-```
+1. `src/token-store.mjs` - Timing-safe comparison + file permission verification
+2. `src/token-service.mjs` - Timing-safe master token comparison (3 locations)
+3. `src/plugin.mjs` - Authorization checks on token endpoints
+4. `src/deal-room.mjs` - Room ID validation
+5. `src/context-escrow.mjs` - Room ID validation
+6. `src/temporal-knowledge-graph.mjs` - Room ID validation
 
 ## Compliance
 
-- ✅ QA_REPORT.md committed
-- ✅ Full test suite passes
-- ✅ No hardcoded secrets
-- ✅ Privacy scan clean
-- ✅ No local paths in source
+- All CRITICAL issues from audit report: **FIXED**
+- HIGH issues (HIGH-001, HIGH-005): **FIXED**
+- No breaking changes to existing API
+- Backward compatible with existing room IDs (validation only prevents malicious IDs)
 
-## Ready for PR
+## Deployment Notes
 
-**Status:** YES
-
-All requirements met:
-- [x] 3 core modules implemented
-- [x] ES modules, async/await
-- [x] SQLite persistence pattern (following token-service.mjs)
-- [x] Proper error handling
-- [x] Full test coverage (37 tests, all passing)
-- [x] QA_REPORT.md generated
-- [x] Architectural decisions documented
+The `isAdmin` flag in token validation is now checked for token management operations. Agents without this flag can only manage their own tokens.

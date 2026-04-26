@@ -1,5 +1,6 @@
 -- Mesh-Memory Queue Persistence Schema
 -- Phase 1: Foundation Hardening
+-- Updated: Performance Optimizations - Additional Indexes
 
 -- Outbound queue for failed A2A messages
 CREATE TABLE IF NOT EXISTS outbound_queue (
@@ -65,9 +66,22 @@ CREATE TABLE IF NOT EXISTS token_audit (
 CREATE INDEX IF NOT EXISTS idx_outbound_queue_next_retry ON outbound_queue(next_retry);
 CREATE INDEX IF NOT EXISTS idx_outbound_queue_peer_id ON outbound_queue(peer_id);
 CREATE INDEX IF NOT EXISTS idx_outbound_queue_created_at ON outbound_queue(created_at);
+-- NEW: Composite index for queue processing queries
+CREATE INDEX IF NOT EXISTS idx_outbound_queue_peer_retry ON outbound_queue(peer_id, next_retry);
+
 CREATE INDEX IF NOT EXISTS idx_dlq_failed_at ON dlq(failed_at);
+-- NEW: Composite index for DLQ queries
+CREATE INDEX IF NOT EXISTS idx_dlq_peer_failed ON dlq(peer_id, failed_at);
+
 CREATE INDEX IF NOT EXISTS idx_token_audit_timestamp ON token_audit(timestamp);
 CREATE INDEX IF NOT EXISTS idx_token_audit_token_id ON token_audit(token_id);
+-- NEW: Composite index for audit queries
+CREATE INDEX IF NOT EXISTS idx_token_audit_action_time ON token_audit(action, timestamp);
+
 CREATE INDEX IF NOT EXISTS idx_tokens_agent_id ON tokens(agent_id);
 CREATE INDEX IF NOT EXISTS idx_tokens_status ON tokens(status);
 CREATE INDEX IF NOT EXISTS idx_tokens_expires_at ON tokens(expires_at);
+-- NEW: Composite index for token rotation queries
+CREATE INDEX IF NOT EXISTS idx_tokens_status_expires ON tokens(status, expires_at);
+-- NEW: Composite index for agent + status lookups
+CREATE INDEX IF NOT EXISTS idx_tokens_agent_status ON tokens(agent_id, status);

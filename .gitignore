@@ -3,6 +3,11 @@ mesh-memory.config.local.json
 memory/mesh/
 memory/lcm/
 memory/threads/
+memory/a2a-*/
+memory/audit/
+memory/compliance/
+memory/deal-rooms/
+memory/policies/
 *.log
 .env
 mesh-memory-coordination/
@@ -11,3 +16,7 @@ mesh-memory.contacts.json
 stress-test-report.md
 scripts/peers.json
 .tokens/
+tests/.test-*/
+tests/*.db*
+tests/*.jsonl
+tests/A2A_INTEGRATION_TEST_REPORT.md

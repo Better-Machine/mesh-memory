@@ -8,43 +8,73 @@
  * - Circuit breaker pattern
  * - Dead letter queue for failed messages
  * 
- * @version 1.0.0
+ * @version 2.0.0 - Refactored to use shared abstractions
  */
 
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { randomUUID, createHash } from 'crypto';
-import sqlite3 from 'sqlite3';
-import { promisify } from 'util';
+import { randomUUID } from 'crypto';
 import { loadConfig } from '../config.mjs';
+import { SQLiteRepository } from './db/repository-base.mjs';
+import { CircuitBreaker, CircuitState, DeliveryStatus } from './circuit-breaker.mjs';
+
+// Re-export CircuitState and DeliveryStatus for backward compatibility
+export { CircuitState, DeliveryStatus } from './circuit-breaker.mjs';
 
 // Config and paths
 let config = null;
 let QUEUE_DIR = 'memory/a2a-queue';
 
-// SQLite database handle
-let db = null;
+// Repository instance
+let repository = null;
 
-// Circuit breaker states
-export const CircuitState = {
-  CLOSED: 'closed',
-  OPEN: 'open',
-  HALF_OPEN: 'half-open'
-};
-
-// Delivery status enum
-export const DeliveryStatus = {
-  PENDING: 'pending',
-  DELIVERED: 'delivered',
-  FAILED: 'failed',
-  DEAD_LETTER: 'dead_letter'
-};
-
-// Circuit breaker state per peer
+// Circuit breaker registry
 const circuitBreakers = new Map();
 
 // Event listeners
 const statusListeners = new Set();
+
+// Schema definition for the queue database
+const QUEUE_SCHEMA = {
+  tables: {
+    outbound_queue: `
+      delivery_id TEXT PRIMARY KEY,
+      peer_name TEXT NOT NULL,
+      message_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 5,
+      next_retry TEXT,
+      created_at TEXT NOT NULL,
+      delivered_at TEXT,
+      ack_received_at TEXT,
+      last_error TEXT,
+      circuit_state TEXT DEFAULT 'closed'
+    `,
+    dead_letter: `
+      delivery_id TEXT PRIMARY KEY,
+      peer_name TEXT NOT NULL,
+      message_json TEXT NOT NULL,
+      failed_at TEXT NOT NULL,
+      attempts INTEGER NOT NULL,
+      last_error TEXT,
+      created_at TEXT NOT NULL
+    `,
+    circuit_history: `
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      peer_name TEXT NOT NULL,
+      from_state TEXT NOT NULL,
+      to_state TEXT NOT NULL,
+      changed_at TEXT NOT NULL,
+      reason TEXT
+    `
+  },
+  indexes: {
+    idx_status: 'outbound_queue(status)',
+    idx_peer_status: 'outbound_queue(peer_name, status)',
+    idx_next_retry: 'outbound_queue(next_retry)'
+  }
+};
 
 /**
  * Initialize the reliability layer
@@ -60,81 +90,15 @@ export async function initializeReliabilityLayer() {
   await fs.mkdir(QUEUE_DIR, { recursive: true });
   await fs.mkdir(join(QUEUE_DIR, 'dead-letter'), { recursive: true });
   
-  // Initialize database
+  // Initialize repository
   const dbPath = join(QUEUE_DIR, 'outbound-queue.db');
-  db = new sqlite3.Database(dbPath);
-  
-  // Promisify database methods
-  db.run = promisify(db.run.bind(db));
-  db.get = promisify(db.get.bind(db));
-  db.all = promisify(db.all.bind(db));
-  
-  // Create tables
-  await initializeSchema();
+  repository = new SQLiteRepository(dbPath, QUEUE_SCHEMA);
+  await repository.init();
   
   console.log('[a2a-reliability-layer] Initialized');
 }
 
-/**
- * Initialize SQLite schema
- */
-async function initializeSchema() {
-  // Main outbound queue table
-  await db.run(`
-    CREATE TABLE IF NOT EXISTS outbound_queue (
-      delivery_id TEXT PRIMARY KEY,
-      peer_name TEXT NOT NULL,
-      message_json TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      attempts INTEGER NOT NULL DEFAULT 0,
-      max_attempts INTEGER NOT NULL DEFAULT 5,
-      next_retry TEXT,
-      created_at TEXT NOT NULL,
-      delivered_at TEXT,
-      ack_received_at TEXT,
-      last_error TEXT,
-      circuit_state TEXT DEFAULT 'closed'
-    )
-  `);
-  
-  // Indexes for efficient queries
-  await db.run(`
-    CREATE INDEX IF NOT EXISTS idx_status ON outbound_queue(status)
-  `);
-  
-  await db.run(`
-    CREATE INDEX IF NOT EXISTS idx_peer_status ON outbound_queue(peer_name, status)
-  `);
-  
-  await db.run(`
-    CREATE INDEX IF NOT EXISTS idx_next_retry ON outbound_queue(next_retry)
-  `);
-  
-  // Dead letter queue
-  await db.run(`
-    CREATE TABLE IF NOT EXISTS dead_letter (
-      delivery_id TEXT PRIMARY KEY,
-      peer_name TEXT NOT NULL,
-      message_json TEXT NOT NULL,
-      failed_at TEXT NOT NULL,
-      attempts INTEGER NOT NULL,
-      last_error TEXT,
-      created_at TEXT NOT NULL
-    )
-  `);
-  
-  // Circuit breaker history
-  await db.run(`
-    CREATE TABLE IF NOT EXISTS circuit_history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      peer_name TEXT NOT NULL,
-      from_state TEXT NOT NULL,
-      to_state TEXT NOT NULL,
-      changed_at TEXT NOT NULL,
-      reason TEXT
-    )
-  `);
-}
+// Schema is now handled by SQLiteRepository
 
 /**
  * Calculate exponential backoff with jitter
@@ -154,51 +118,29 @@ function calculateBackoff(attempt) {
 /**
  * Get or create circuit breaker for a peer
  * @param {string} peerName
- * @returns {Object} Circuit breaker state
+ * @returns {CircuitBreaker} Circuit breaker instance
  */
 function getCircuitBreaker(peerName) {
   if (!circuitBreakers.has(peerName)) {
-    circuitBreakers.set(peerName, {
-      state: CircuitState.CLOSED,
-      consecutiveFailures: 0,
-      lastFailureAt: null,
-      openedAt: null
+    const breaker = new CircuitBreaker(peerName, {
+      failureThreshold: 5,
+      cooldownMs: 60000,
+      onStateChange: async (change) => {
+        // Log state change to database
+        await repository.query(
+          `INSERT INTO circuit_history (peer_name, from_state, to_state, changed_at, reason)
+           VALUES (?, ?, ?, ?, ?)`,
+          [change.key, change.from, change.to, new Date(change.timestamp).toISOString(), change.reason]
+        );
+        console.log(`[a2a-reliability] Circuit ${change.key}: ${change.from} → ${change.to} (${change.reason})`);
+      }
     });
+    circuitBreakers.set(peerName, breaker);
   }
   return circuitBreakers.get(peerName);
 }
 
-/**
- * Update circuit breaker state
- * @param {string} peerName
- * @param {string} newState
- * @param {string} reason
- */
-async function updateCircuitState(peerName, newState, reason) {
-  const cb = getCircuitBreaker(peerName);
-  const oldState = cb.state;
-  
-  if (oldState === newState) return;
-  
-  cb.state = newState;
-  
-  if (newState === CircuitState.OPEN) {
-    cb.openedAt = Date.now();
-    cb.consecutiveFailures = 0;
-  } else if (newState === CircuitState.CLOSED) {
-    cb.consecutiveFailures = 0;
-    cb.openedAt = null;
-  }
-  
-  // Log state change
-  await db.run(
-    `INSERT INTO circuit_history (peer_name, from_state, to_state, changed_at, reason)
-     VALUES (?, ?, ?, ?, ?)`,
-    [peerName, oldState, newState, new Date().toISOString(), reason]
-  );
-  
-  console.log(`[a2a-reliability] Circuit ${peerName}: ${oldState} → ${newState} (${reason})`);
-}
+// State changes now handled by CircuitBreaker class
 
 /**
  * Check if circuit breaker allows the request
@@ -206,41 +148,17 @@ async function updateCircuitState(peerName, newState, reason) {
  * @returns {boolean}
  */
 export function isCircuitClosed(peerName) {
-  const cb = getCircuitBreaker(peerName);
-  
-  if (cb.state === CircuitState.CLOSED) {
-    return true;
-  }
-  
-  if (cb.state === CircuitState.OPEN) {
-    // Check if cooldown period (60s) has elapsed
-    if (cb.openedAt && Date.now() - cb.openedAt >= 60000) {
-      // Transition to half-open
-      updateCircuitState(peerName, CircuitState.HALF_OPEN, 'cooldown elapsed');
-      return true;
-    }
-    return false;
-  }
-  
-  // HALF_OPEN - allow one probe
-  return true;
+  const breaker = getCircuitBreaker(peerName);
+  return breaker.canAttempt();
 }
 
 /**
  * Record success for circuit breaker
  * @param {string} peerName
  */
-export async function recordSuccess(peerName) {
-  const cb = getCircuitBreaker(peerName);
-  
-  if (cb.state === CircuitState.HALF_OPEN) {
-    await updateCircuitState(peerName, CircuitState.CLOSED, 'probe succeeded');
-  } else if (cb.state === CircuitState.OPEN) {
-    // Direct success while open - close immediately
-    await updateCircuitState(peerName, CircuitState.CLOSED, 'direct recovery');
-  } else {
-    cb.consecutiveFailures = 0;
-  }
+export function recordSuccess(peerName) {
+  const breaker = getCircuitBreaker(peerName);
+  breaker.recordSuccess();
 }
 
 /**
@@ -248,15 +166,9 @@ export async function recordSuccess(peerName) {
  * @param {string} peerName
  * @param {string} error
  */
-export async function recordFailure(peerName, error) {
-  const cb = getCircuitBreaker(peerName);
-  cb.consecutiveFailures++;
-  cb.lastFailureAt = Date.now();
-  
-  // Open circuit after 5 consecutive failures
-  if (cb.consecutiveFailures >= 5 && cb.state === CircuitState.CLOSED) {
-    await updateCircuitState(peerName, CircuitState.OPEN, `failure threshold reached: ${error}`);
-  }
+export function recordFailure(peerName, error) {
+  const breaker = getCircuitBreaker(peerName);
+  breaker.recordFailure(error);
 }
 
 /**
@@ -277,7 +189,7 @@ export async function sendWithGuarantee(peer, message, options = {}) {
   
   if (guarantee) {
     // Write to WAL queue first
-    await db.run(
+    await repository.query(
       `INSERT INTO outbound_queue 
        (delivery_id, peer_name, message_json, status, attempts, max_attempts, next_retry, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -299,14 +211,14 @@ export async function sendWithGuarantee(peer, message, options = {}) {
  * @returns {Promise<Object>} Status object
  */
 export async function getDeliveryStatus(deliveryId) {
-  const row = await db.get(
+  const row = await repository.queryOne(
     `SELECT * FROM outbound_queue WHERE delivery_id = ?`,
     [deliveryId]
   );
   
   if (!row) {
     // Check dead letter queue
-    const dlqRow = await db.get(
+    const dlqRow = await repository.queryOne(
       `SELECT * FROM dead_letter WHERE delivery_id = ?`,
       [deliveryId]
     );
@@ -347,7 +259,7 @@ export async function getDeliveryStatus(deliveryId) {
 export async function acknowledgeDelivery(deliveryId) {
   const now = new Date().toISOString();
   
-  await db.run(
+  await repository.query(
     `UPDATE outbound_queue 
      SET status = ?, ack_received_at = ?
      WHERE delivery_id = ? AND status = ?`,
@@ -355,7 +267,7 @@ export async function acknowledgeDelivery(deliveryId) {
   );
   
   // Verify the update
-  const row = await db.get(
+  const row = await repository.queryOne(
     `SELECT status FROM outbound_queue WHERE delivery_id = ?`,
     [deliveryId]
   );
@@ -376,7 +288,7 @@ export async function acknowledgeDelivery(deliveryId) {
 export async function markDelivered(deliveryId) {
   const now = new Date().toISOString();
   
-  await db.run(
+  await repository.query(
     `UPDATE outbound_queue 
      SET status = ?, delivered_at = ?
      WHERE delivery_id = ?`,
@@ -393,7 +305,7 @@ export async function markDelivered(deliveryId) {
  * @returns {Promise<Object>} Result with shouldRetry
  */
 export async function recordAttemptFailure(deliveryId, error) {
-  const row = await db.get(
+  const row = await repository.queryOne(
     `SELECT * FROM outbound_queue WHERE delivery_id = ?`,
     [deliveryId]
   );
@@ -413,7 +325,7 @@ export async function recordAttemptFailure(deliveryId, error) {
   const backoff = calculateBackoff(attempts);
   const nextRetry = new Date(Date.now() + backoff).toISOString();
   
-  await db.run(
+  await repository.query(
     `UPDATE outbound_queue 
      SET attempts = ?, next_retry = ?, last_error = ?
      WHERE delivery_id = ?`,
@@ -436,7 +348,7 @@ export async function recordAttemptFailure(deliveryId, error) {
  * @param {number} attempts
  */
 async function moveToDeadLetter(deliveryId, error, attempts) {
-  const row = await db.get(
+  const row = await repository.queryOne(
     `SELECT * FROM outbound_queue WHERE delivery_id = ?`,
     [deliveryId]
   );
@@ -446,7 +358,7 @@ async function moveToDeadLetter(deliveryId, error, attempts) {
   const now = new Date().toISOString();
   
   // Insert into dead letter
-  await db.run(
+  await repository.query(
     `INSERT INTO dead_letter 
      (delivery_id, peer_name, message_json, failed_at, attempts, last_error, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -454,7 +366,7 @@ async function moveToDeadLetter(deliveryId, error, attempts) {
   );
   
   // Remove from outbound queue
-  await db.run(
+  await repository.query(
     `DELETE FROM outbound_queue WHERE delivery_id = ?`,
     [deliveryId]
   );
@@ -489,7 +401,7 @@ export async function retryFailed(options = {}) {
   query += ` LIMIT ?`;
   params.push(limit);
   
-  const rows = await db.all(query, params);
+  const rows = await repository.queryMany(query, params);
   const retried = [];
   
   for (const row of rows) {
@@ -497,7 +409,7 @@ export async function retryFailed(options = {}) {
     const now = new Date().toISOString();
     
     // Re-queue with fresh state
-    await db.run(
+    await repository.query(
       `INSERT INTO outbound_queue 
        (delivery_id, peer_name, message_json, status, attempts, max_attempts, next_retry, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -505,7 +417,7 @@ export async function retryFailed(options = {}) {
     );
     
     // Remove from dead letter
-    await db.run(
+    await repository.query(
       `DELETE FROM dead_letter WHERE delivery_id = ?`,
       [deliveryId]
     );
@@ -526,7 +438,7 @@ export async function retryFailed(options = {}) {
 export async function getPendingMessages(limit = 100) {
   const now = new Date().toISOString();
   
-  const rows = await db.all(
+  const rows = await repository.queryMany(
     `SELECT * FROM outbound_queue 
      WHERE status = ? 
        AND (next_retry IS NULL OR next_retry <= ?)
@@ -565,7 +477,7 @@ export async function getDeadLetterQueue(options = {}) {
   query += ` ORDER BY failed_at DESC LIMIT ?`;
   params.push(limit);
   
-  const rows = await db.all(query, params);
+  const rows = await repository.queryMany(query, params);
   
   return rows.map(row => ({
     deliveryId: row.delivery_id,
@@ -584,14 +496,8 @@ export async function getDeadLetterQueue(options = {}) {
  * @returns {Object} Circuit state
  */
 export function getCircuitState(peerName) {
-  const cb = getCircuitBreaker(peerName);
-  return {
-    peer: peerName,
-    state: cb.state,
-    consecutiveFailures: cb.consecutiveFailures,
-    lastFailureAt: cb.lastFailureAt,
-    openedAt: cb.openedAt
-  };
+  const breaker = getCircuitBreaker(peerName);
+  return breaker.getState();
 }
 
 /**
@@ -625,7 +531,7 @@ function notifyStatusChange(deliveryId, status, details = {}) {
  * @returns {Promise<Object>} Stats
  */
 export async function getQueueStats() {
-  const stats = await db.get(`
+  const stats = await repository.queryOne(`
     SELECT 
       COUNT(*) as total,
       SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
@@ -634,7 +540,7 @@ export async function getQueueStats() {
     FROM outbound_queue
   `);
   
-  const dlqStats = await db.get(`
+  const dlqStats = await repository.queryOne(`
     SELECT COUNT(*) as dead_letter_count FROM dead_letter
   `);
   
@@ -657,15 +563,14 @@ export async function cleanupOldMessages(maxAgeDays = 7) {
   cutoff.setDate(cutoff.getDate() - maxAgeDays);
   const cutoffStr = cutoff.toISOString();
   
-  const result = await db.run(
+  await repository.query(
     `DELETE FROM outbound_queue 
      WHERE status = ? AND delivered_at < ?`,
     [DeliveryStatus.DELIVERED, cutoffStr]
   );
   
   // Get count of deleted rows
-  const countResult = await db.get(`SELECT changes() as changes`);
-  const deletedCount = countResult ? countResult.changes : 0;
+  const deletedCount = await repository.changes();
   
   console.log(`[a2a-reliability] Cleaned up ${deletedCount} old messages`);
   return deletedCount;
@@ -675,9 +580,9 @@ export async function cleanupOldMessages(maxAgeDays = 7) {
  * Close database connection
  */
 export async function closeReliabilityLayer() {
-  if (db) {
-    await new Promise((resolve) => db.close(resolve));
-    db = null;
+  if (repository) {
+    await repository.close();
+    repository = null;
   }
 }
 
