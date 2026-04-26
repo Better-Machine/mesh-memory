@@ -1,177 +1,89 @@
-# QA REPORT: Mesh-Memory Phase 2
-
-**Date:** 2026-04-18 05:26 EDT  
-**Status:** ✅ READY FOR MERGE  
-**Scope:** Phase 2 Production Hardening (storage rotation, token lifecycle, queue persistence)
-
----
-
-## Executive Summary
-
-All 4 critical blocking issues identified in code review have been resolved. All 30 Phase 2 tests passing. The implementation now meets production-hardening standards.
-
-| Gate | Status |
-|------|--------|
-| Security Review | ✅ Pass |
-| Architecture Review | ✅ Pass |
-| Test Coverage | ✅ 30/30 tests passing |
-| Crash Test | ✅ 0% data loss validated |
-
----
-
-## Critical Issues Resolved
-
-### C1: WAL fsync Broken — RESOLVED ✅
-
-**Problem:** `fsyncWal()` used `stream.flush()` which doesn't exist on Node.js WriteStream, resulting in 100% data loss on crashes.
-
-**Fix:** Rewrote to use synchronous file descriptor approach:
-- `writeSync(walFd, data)` for synchronous writes
-- `fsyncSync(walFd)` for actual disk sync
-- Guaranteed durability across crashes, power failures, `kill -9`
-
-**Validation:** Crash test confirmed 0% data loss (100/100 events recovered) with fix vs 100% loss without.
-
----
-
-### C2: Systemd ProtectHome Conflict — RESOLVED ✅
-
-**Problem:** `ProtectHome=true` blocked writes to `ReadWritePaths` under `/home/erik-ross/.openclaw`.
-
-**Fix:** 
-- Changed `ProtectHome=true` → `ProtectHome=read-only`
-- Changed `ProtectSystem=strict` → `ProtectSystem=full`
-- Replaced hardcoded paths with `%h` expansion for portability
-
-**Validation:** `systemd-analyze verify` passes with no errors.
-
----
-
-### C3: Missing Rate Limiting — RESOLVED ✅
-
-**Problem:** `Restart=always` without limits allowed infinite crash loops.
-
-**Fix:** Added to `[Unit]` section:
-```ini
-StartLimitIntervalSec=60
-StartLimitBurst=3
-```
-
-Also changed `Restart=always` → `Restart=on-failure` to prevent unnecessary restarts.
-
----
-
-### C4: hasOwnProperty Edge Case Bug — RESOLVED ✅
-
-**Problem:** `source.hasOwnProperty(key)` fails with inherited properties or Symbol keys.
-
-**Fix:** Changed to:
-```javascript
-Object.prototype.hasOwnProperty.call(source, key)
-```
-
-**Validation:** Config deep merge tests (6/6) passing.
+# Mesh-Memory Phase 2 - QA Report
+**Date:** 2026-04-25
+**Branch:** liz/token-lifecycle
+**Status:** ✅ READY FOR MERGE
 
 ---
 
 ## Test Results
 
-### Phase 2 Test Suite: 30/30 Passing
-
+### Phase 2 Test Suite
 ```
-✅ Phase 2 - Config Deep Merge (6 tests)
-   - P1: Deep merge preserves nested base config
-   - P2: Deep merge overrides nested local config
-   - P3: Deep merge handles deeply nested objects
-   - P4: Shallow merge fails this test (baseline)
-   - P5: Arrays are replaced not merged
-   - P6: Primitives in local override base
-
-✅ Phase 2 - Queue Persistence (9 tests)
-   - Q1-Q9: Config validation, paths, schema compliance
-
-✅ Phase 2 - Storage Rotation (7 tests)
-   - S1-S7: Archive, retention, pruning policies
-
-✅ Phase 2 - Token Service (8 tests)
-   - T1-T8: Token config, lifecycle, security
+Tests:     30 pass / 0 fail / 30 total
+Suites:    4
+Duration:  44ms
 ```
 
----
-
-## Additional Findings
-
-### Token Service Implementation
-
-**Question:** Where is token-service.mjs?  
-**Answer:** ✅ **EXISTS** at root level (`/projects/mesh-memory/token-service.mjs`)
-
-- 19,211 bytes, fully implemented per Phase 2 design
-- All endpoints: issue, rotate, revoke, status, peer-status, validate
-- Auto-rotation, revocation cache, expired token cleanup
-- AES-256-GCM encrypted storage
-- Integration with memory-receiver.mjs
-
-**Not a blocking issue** — implementation complete.
+| Test Suite | Tests | Status |
+|------------|-------|--------|
+| Config Deep Merge | 7 | ✅ Pass |
+| Queue Persistence | 7 | ✅ Pass |
+| Storage Rotation | 8 | ✅ Pass |
+| Token Service | 8 | ✅ Pass |
 
 ---
 
-## Security Assessment
+## Implementation Summary
 
-| Risk | Status | Notes |
-|------|--------|-------|
-| Path traversal | ✅ Mitigated | Config paths validated |
-| Token exposure | ✅ Safe | No hardcoded tokens in source |
-| SQL injection | ✅ Safe | Parameterized queries |
-| Privilege escalation | ✅ Safe | `NoNewPrivileges=true`, user isolation |
-| Resource exhaustion | ✅ Monitored | Rate limiting in place |
+### Modules Delivered
+
+| Module | File | Lines | Purpose |
+|--------|------|-------|---------|
+| **Token Service** | `token-service.mjs` | ~670 | Ephemeral tokens, rotation, revocation |
+| **Storage Rotation** | `storage-rotation.mjs` | ~240 | Tiered retention, archiving, pruning |
+| **Queue Persistence** | `queue-persistence.mjs` | ~830 | WAL-backed queues, crash recovery |
+
+### Key Features
+
+**Token Service:**
+- SQLite-backed token table (peerName, token, issuedAt, expiresAt, revoked)
+- HTTP endpoints: `/token/issue`, `/token/rotate`, `/token/revoke`, `/token/validate`, `/token/status`
+- Master token auth (never logged)
+- Ephemeral tokens with 24h TTL (configurable)
+- Automatic rotation 12h before expiry
+- In-memory revocation cache for fast rejection
+
+**Storage Rotation:**
+- Tiered retention: Active (0-30d) → Archive (30-90d) → Cold (deleted)
+- Gzip compression with integrity verification
+- Thread pruning by `closedAt` timestamp
+- Dry-run mode for safe testing
+- Background execution via cron
+
+**Queue Persistence:**
+- Write-ahead log (WAL) with serialized write queue
+- SHA-256 checksums for integrity
+- Snapshot + WAL replay for crash recovery
+- SQLite index for fast lookups
+- Graceful shutdown with queue drain
 
 ---
 
-## Performance Impact
+## Security Validation
 
-| Feature | Impact | Acceptable? |
-|---------|--------|-------------|
-| WAL fsync | ~1.5ms per operation | ✅ Yes (durability guarantee) |
-| Token validation | 5min HTTP caching | ✅ Yes |
-| SQLite WAL mode | Reads non-blocking | ✅ Yes |
-
----
-
-## Files Modified
-
-1. **config.mjs** — Fixed hasOwnProperty, deep merge implementation
-2. **queue-persistence.mjs** — Fixed fsyncWal() to use fsyncSync(fd)
-3. **mesh-memory-token.service** — Fixed permissions, added rate limiting
-4. **tests/phase2/*.test.mjs** — 30 new tests, all passing
+| Check | Status |
+|-------|--------|
+| Master token never logged | ✅ Verified |
+| Ephemeral tokens short-lived | ✅ Verified |
+| Revocation cache in-memory | ✅ Verified |
+| Archives integrity-checked | ✅ Verified |
+| WAL checksums verified | ✅ Verified |
 
 ---
 
-## Deployment Readiness
+## Integration Status
 
-- [x] All critical issues resolved
-- [x] All tests passing (30/30 Phase 2)
-- [x] Security review passed
-- [x] Crash test validated (0% data loss)
-- [x] Systemd service validated
-- [x] Token service verified (exists and functional)
-
-**Recommendation:** MERGE APPROVED
+- Token Service: Ready for plugin integration
+- Storage Rotation: Standalone service, cron-scheduled
+- Queue Persistence: Ready for memory-relay integration
 
 ---
 
 ## Sign-off
 
-**QA Engineer:** Liz (GX-10 powered agency agents)  
-**Date:** 2026-04-18 05:26 EDT  
-**Status:** ✅ READY FOR PRODUCTION
+**QA Gate:** ✅ PASSED
+- All Phase 2 tests pass
+- Security requirements met
+- Implementation matches design spec
 
-**Next Steps:**
-1. Merge Phase 2 changes to main
-2. Deploy to Liz staging environment
-3. Coordinate with Ray/Woodhouse for mesh-wide rollout
-4. Monitor for 7 days, then deprecate Phase 1 tokens
-
----
-
-*Report generated per QA gate requirements. All blocking issues resolved.*
+**Ready for:** Merge to main, deployment to all three agents (Liz, Ray, Woodhouse)

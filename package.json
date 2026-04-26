@@ -17,7 +17,7 @@
     "test:pool": "node --test tests/shared-pool.test.mjs",
     "test:backends": "node --test tests/memory-backend.test.mjs",
     "test:phase1": "node --test tests/phase1/*.test.mjs",
-    "test": "node --test tests/*.test.mjs tests/phase1/*.test.mjs",
+    "test": "node --test --test-force-exit tests/*.test.mjs tests/phase1/*.test.mjs",
     "test:reliable": "./run-tests-reliable.sh"
   },
   "authors": [
@@ -32,5 +32,8 @@
       "github": "Better-Machine"
     }
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^12.9.0"
+  }
 }

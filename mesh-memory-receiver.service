@@ -1,12 +1,12 @@
 [Unit]
-Description=Mesh-Memory Token Lifecycle Service
+Description=Mesh-Memory Memory Receiver
 After=network.target
 
 [Service]
 Type=simple
 User=%h
 WorkingDirectory=%h/.openclaw/workspace/projects/mesh-memory
-ExecStart=/usr/bin/node token-lifecycle.mjs
+ExecStart=/usr/bin/node memory-receiver.mjs
 Restart=on-failure
 RestartSec=5
 StartLimitIntervalSec=60
@@ -17,7 +17,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.openclaw/workspace/memory/mesh
+ReadWritePaths=%h/.openclaw/workspace/memory/mesh %h/.openclaw/workspace/memory/queue
 
 # Phase 4: Extended hardening
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
