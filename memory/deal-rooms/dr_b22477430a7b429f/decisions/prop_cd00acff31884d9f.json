@@ -1,0 +1,34 @@
+{
+  "proposalId": "prop_cd00acff31884d9f",
+  "roomId": "dr_b22477430a7b429f",
+  "state": "APPROVED_MAJORITY",
+  "proposal": {
+    "type": "terms",
+    "content": {
+      "type": "terms"
+    },
+    "rationale": "Test"
+  },
+  "proposer": "maj-a@test.com",
+  "proposedAt": "2026-04-26T22:16:13.500Z",
+  "deadline": "2026-04-27T22:16:13.500Z",
+  "consensusMode": "majority",
+  "votes": [
+    {
+      "agentId": "maj-a@test.com",
+      "vote": "approve",
+      "reason": "",
+      "timestamp": "2026-04-26T22:16:13.500Z"
+    },
+    {
+      "agentId": "maj-b@test.com",
+      "vote": "approve",
+      "reason": "",
+      "timestamp": "2026-04-26T22:16:13.501Z"
+    }
+  ],
+  "requiredVotes": null,
+  "voteThreshold": null,
+  "finalizedAt": "2026-04-26T22:16:13.502Z",
+  "auditHash": "ebb2190d480d730d1a44330ec80bbe4a86c14705e10ef3a1abed93b06967ff5b"
+}

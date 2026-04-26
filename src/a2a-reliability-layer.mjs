@@ -16,7 +16,7 @@ import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { loadConfig } from '../config.mjs';
 import { SQLiteRepository } from './db/repository-base.mjs';
-import { CircuitBreaker } from './circuit-breaker.mjs';
+import { CircuitBreaker, CircuitState, DeliveryStatus } from './circuit-breaker.mjs';
 
 // Re-export CircuitState and DeliveryStatus for backward compatibility
 export { CircuitState, DeliveryStatus } from './circuit-breaker.mjs';

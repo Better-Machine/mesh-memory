@@ -1,0 +1,40 @@
+{
+  "proposalId": "prop_a99f6bf71bc94b54",
+  "roomId": "dr_379532d181464d81",
+  "state": "APPROVED_UNANIMOUS",
+  "proposal": {
+    "type": "terms",
+    "content": {
+      "type": "terms"
+    },
+    "rationale": "Test"
+  },
+  "proposer": "uni-a@test.com",
+  "proposedAt": "2026-04-26T22:16:13.481Z",
+  "deadline": "2026-04-27T22:16:13.481Z",
+  "consensusMode": "unanimous",
+  "votes": [
+    {
+      "agentId": "uni-a@test.com",
+      "vote": "approve",
+      "reason": "",
+      "timestamp": "2026-04-26T22:16:13.481Z"
+    },
+    {
+      "agentId": "uni-b@test.com",
+      "vote": "approve",
+      "reason": "",
+      "timestamp": "2026-04-26T22:16:13.483Z"
+    },
+    {
+      "agentId": "uni-c@test.com",
+      "vote": "approve",
+      "reason": "",
+      "timestamp": "2026-04-26T22:16:13.484Z"
+    }
+  ],
+  "requiredVotes": null,
+  "voteThreshold": null,
+  "finalizedAt": "2026-04-26T22:16:13.485Z",
+  "auditHash": "33b56e5768426d1f5512a96903b6a1b070bcbb7ea069b6723ccbd94065ab43e4"
+}

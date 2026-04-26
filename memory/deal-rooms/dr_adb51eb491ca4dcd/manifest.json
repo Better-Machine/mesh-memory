@@ -1,0 +1,43 @@
+{
+  "roomId": "dr_adb51eb491ca4dcd",
+  "purpose": "Test room",
+  "scope": {
+    "topics": [],
+    "documents": [],
+    "maxParticipants": 4
+  },
+  "policy": {
+    "autoClose": null,
+    "consensusRequired": "unanimous",
+    "dataResidency": "us-east-1",
+    "retentionDays": 2555
+  },
+  "state": "CLOSED",
+  "createdAt": "2026-04-26T22:15:18.085Z",
+  "updatedAt": "2026-04-26T22:15:18.118Z",
+  "participants": [
+    {
+      "agentId": "test-a@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:15:18.096Z",
+      "status": "inactive"
+    },
+    {
+      "agentId": "test-b@test.com",
+      "role": "reviewer",
+      "joinedAt": "2026-04-26T22:15:18.099Z",
+      "status": "inactive"
+    },
+    {
+      "agentId": "test-c@test.com",
+      "role": "observer",
+      "joinedAt": "2026-04-26T22:15:18.100Z",
+      "status": "inactive"
+    }
+  ],
+  "pendingConsents": [],
+  "activatedAt": "2026-04-26T22:15:18.100Z",
+  "closedAt": "2026-04-26T22:15:18.118Z",
+  "closedBy": "creator",
+  "closeReason": "Test complete"
+}

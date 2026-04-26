@@ -1,0 +1,40 @@
+{
+  "roomId": "dr_a7b44770804145db",
+  "purpose": "Consensus test room",
+  "scope": {
+    "topics": [],
+    "documents": [],
+    "maxParticipants": 3
+  },
+  "policy": {
+    "autoClose": null,
+    "consensusRequired": "unanimous",
+    "dataResidency": "us-east-1",
+    "retentionDays": 2555
+  },
+  "state": "ACTIVE",
+  "createdAt": "2026-04-26T22:16:13.469Z",
+  "updatedAt": "2026-04-26T22:16:13.471Z",
+  "participants": [
+    {
+      "agentId": "c-a@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:16:13.470Z",
+      "status": "active"
+    },
+    {
+      "agentId": "c-b@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:16:13.471Z",
+      "status": "active"
+    },
+    {
+      "agentId": "c-c@test.com",
+      "role": "reviewer",
+      "joinedAt": "2026-04-26T22:16:13.471Z",
+      "status": "active"
+    }
+  ],
+  "pendingConsents": [],
+  "activatedAt": "2026-04-26T22:16:13.471Z"
+}

@@ -1,0 +1,34 @@
+{
+  "proposalId": "prop_94862cd0293042c0",
+  "roomId": "dr_0a083f9b8a7a43b7",
+  "state": "REJECTED",
+  "proposal": {
+    "type": "terms",
+    "content": {
+      "type": "terms"
+    },
+    "rationale": "Test"
+  },
+  "proposer": "ur-a@test.com",
+  "proposedAt": "2026-04-26T22:12:32.867Z",
+  "deadline": "2026-04-27T22:12:32.867Z",
+  "consensusMode": "unanimous",
+  "votes": [
+    {
+      "agentId": "ur-a@test.com",
+      "vote": "approve",
+      "reason": "",
+      "timestamp": "2026-04-26T22:12:32.872Z"
+    },
+    {
+      "agentId": "ur-b@test.com",
+      "vote": "reject",
+      "reason": "",
+      "timestamp": "2026-04-26T22:12:32.874Z"
+    }
+  ],
+  "requiredVotes": null,
+  "voteThreshold": null,
+  "finalizedAt": "2026-04-26T22:12:32.875Z",
+  "auditHash": "10e8ce90095c44a3ed6c59ba742e59ed2e0edbe0c084d619846699ff26ae3696"
+}

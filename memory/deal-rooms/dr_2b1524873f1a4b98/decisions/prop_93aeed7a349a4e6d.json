@@ -1,0 +1,24 @@
+{
+  "proposalId": "prop_93aeed7a349a4e6d",
+  "roomId": "dr_2b1524873f1a4b98",
+  "state": "VOTING",
+  "proposal": {
+    "type": "contract_terms",
+    "content": {
+      "type": "contract_terms",
+      "terms": {
+        "price": 50000
+      }
+    },
+    "rationale": "Test proposal"
+  },
+  "proposer": "c-a@test.com",
+  "proposedAt": "2026-04-26T20:12:44.035Z",
+  "deadline": "2026-04-27T20:12:44.035Z",
+  "consensusMode": "unanimous",
+  "votes": [],
+  "requiredVotes": null,
+  "voteThreshold": null,
+  "finalizedAt": null,
+  "auditHash": "46418823af4041d43bfe10287dd3094d942b51daecbc90044424070d2fd1b921"
+}

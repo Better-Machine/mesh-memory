@@ -1,0 +1,34 @@
+{
+  "roomId": "dr_ce4b915ca130464a",
+  "purpose": "Duplicate vote room",
+  "scope": {
+    "topics": [],
+    "documents": [],
+    "maxParticipants": 2
+  },
+  "policy": {
+    "autoClose": null,
+    "consensusRequired": "unanimous",
+    "dataResidency": "us-east-1",
+    "retentionDays": 2555
+  },
+  "state": "ACTIVE",
+  "createdAt": "2026-04-26T22:16:13.493Z",
+  "updatedAt": "2026-04-26T22:16:13.494Z",
+  "participants": [
+    {
+      "agentId": "dup-a@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:16:13.493Z",
+      "status": "active"
+    },
+    {
+      "agentId": "dup-b@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:16:13.494Z",
+      "status": "active"
+    }
+  ],
+  "pendingConsents": [],
+  "activatedAt": "2026-04-26T22:16:13.494Z"
+}

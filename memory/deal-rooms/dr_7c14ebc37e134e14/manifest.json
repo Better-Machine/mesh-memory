@@ -1,0 +1,34 @@
+{
+  "roomId": "dr_7c14ebc37e134e14",
+  "purpose": "Reviewer room",
+  "scope": {
+    "topics": [],
+    "documents": [],
+    "maxParticipants": 2
+  },
+  "policy": {
+    "autoClose": null,
+    "consensusRequired": "unanimous",
+    "dataResidency": "us-east-1",
+    "retentionDays": 2555
+  },
+  "state": "ACTIVE",
+  "createdAt": "2026-04-26T22:16:13.474Z",
+  "updatedAt": "2026-04-26T22:16:13.477Z",
+  "participants": [
+    {
+      "agentId": "rev-a@test.com",
+      "role": "reviewer",
+      "joinedAt": "2026-04-26T22:16:13.476Z",
+      "status": "active"
+    },
+    {
+      "agentId": "rev-b@test.com",
+      "role": "reviewer",
+      "joinedAt": "2026-04-26T22:16:13.477Z",
+      "status": "active"
+    }
+  ],
+  "pendingConsents": [],
+  "activatedAt": "2026-04-26T22:16:13.477Z"
+}

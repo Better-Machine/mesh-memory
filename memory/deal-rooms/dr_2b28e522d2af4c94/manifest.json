@@ -1,0 +1,36 @@
+{
+  "roomId": "dr_2b28e522d2af4c94",
+  "purpose": "A2A Session [A2A Context: ctx_72da3e04d1b64c0d]",
+  "scope": {
+    "topics": [
+      "a2a-session",
+      "agent-communication"
+    ],
+    "documents": [],
+    "maxParticipants": 2
+  },
+  "policy": {
+    "autoClose": null,
+    "consensusRequired": "majority",
+    "dataResidency": "us-east-1",
+    "retentionDays": 30
+  },
+  "state": "PENDING_CONSENT",
+  "createdAt": "2026-04-26T22:16:13.699Z",
+  "updatedAt": "2026-04-26T22:16:13.699Z",
+  "participants": [],
+  "pendingConsents": [
+    {
+      "agentId": "self",
+      "role": "negotiator",
+      "invitedAt": "2026-04-26T22:16:13.699Z",
+      "status": "pending"
+    },
+    {
+      "agentId": "test-peer",
+      "role": "negotiator",
+      "invitedAt": "2026-04-26T22:16:13.699Z",
+      "status": "pending"
+    }
+  ]
+}

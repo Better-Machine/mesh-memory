@@ -488,7 +488,6 @@ export class TokenStore {
     }
   }
 }
-}
 
 // Singleton instance
 let tokenStoreInstance = null;

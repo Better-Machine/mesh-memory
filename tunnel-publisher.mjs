@@ -306,7 +306,7 @@ export class TunnelPublisher {
 
       if (this.peers.length === 0) {
         this.logger.warn("No peers configured, fact not published", { factId: fact.id });
-        return {}; // Empty object as expected by test
+        return {}; // Empty object - safeExecute will wrap it
       }
 
       const summary = {};

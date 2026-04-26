@@ -1,0 +1,34 @@
+{
+  "roomId": "dr_00cc8f75428f4280",
+  "purpose": "Escrow test room",
+  "scope": {
+    "topics": [],
+    "documents": [],
+    "maxParticipants": 2
+  },
+  "policy": {
+    "autoClose": null,
+    "consensusRequired": "unanimous",
+    "dataResidency": "us-east-1",
+    "retentionDays": 2555
+  },
+  "state": "ACTIVE",
+  "createdAt": "2026-04-26T20:12:44.025Z",
+  "updatedAt": "2026-04-26T20:12:44.027Z",
+  "participants": [
+    {
+      "agentId": "escrow-a@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T20:12:44.026Z",
+      "status": "active"
+    },
+    {
+      "agentId": "escrow-b@test.com",
+      "role": "reviewer",
+      "joinedAt": "2026-04-26T20:12:44.027Z",
+      "status": "active"
+    }
+  ],
+  "pendingConsents": [],
+  "activatedAt": "2026-04-26T20:12:44.027Z"
+}

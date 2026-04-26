@@ -28,6 +28,17 @@ export const CircuitState = {
 };
 
 /**
+ * Delivery status enum for reliability layer
+ * @enum {string}
+ */
+export const DeliveryStatus = {
+  PENDING: 'pending',
+  DELIVERED: 'delivered',
+  FAILED: 'failed',
+  DEAD_LETTER: 'dead_letter'
+};
+
+/**
  * Default configuration values
  */
 const DEFAULTS = {

@@ -1,0 +1,28 @@
+{
+  "proposalId": "prop_aa36901334d64778",
+  "roomId": "dr_88a3c7cf86d24aa0",
+  "state": "VOTING",
+  "proposal": {
+    "type": "test",
+    "content": {
+      "type": "test"
+    },
+    "rationale": "Test"
+  },
+  "proposer": "dup-a@test.com",
+  "proposedAt": "2026-04-26T22:15:18.155Z",
+  "deadline": "2026-04-27T22:15:18.155Z",
+  "consensusMode": "unanimous",
+  "votes": [
+    {
+      "agentId": "dup-a@test.com",
+      "vote": "approve",
+      "reason": "",
+      "timestamp": "2026-04-26T22:15:18.156Z"
+    }
+  ],
+  "requiredVotes": null,
+  "voteThreshold": null,
+  "finalizedAt": null,
+  "auditHash": "d8f398c42f8e5be31f8c647d61615a54a4ee7964bf678baf33dab18c63f3583d"
+}

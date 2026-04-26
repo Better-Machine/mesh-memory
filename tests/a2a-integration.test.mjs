@@ -82,9 +82,11 @@ async function runReliabilityTests() {
     retryFailed,
     getDeadLetterQueue,
     getQueueStats,
-    DeliveryStatus,
     closeReliabilityLayer
   } = await import('../src/a2a-reliability-layer.mjs');
+  
+  // Import DeliveryStatus from circuit-breaker.mjs (re-exported for convenience)
+  const { DeliveryStatus } = await import('../src/circuit-breaker.mjs');
   
   // Override config
   const originalLoadConfig = await import('../config.mjs');

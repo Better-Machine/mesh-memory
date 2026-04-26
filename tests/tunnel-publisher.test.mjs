@@ -132,17 +132,14 @@ async function testTunnelPublisher() {
   };
 
   const result = await publisher.publishFact(validFact);
-  assertEqual(Object.keys(result).length, 0, "No peers should result in empty summary");
+  // safeExecute wraps the result; check we got success with empty data
+  assertEqual(result.success, true, "Should succeed even with no peers");
+  assertEqual(Object.keys(result.data || {}).length, 0, "No peers should result in empty summary");
 
-  // Test publishFact with invalid fact
-  let threw = false;
-  try {
-    await publisher.publishFact({ invalid: true });
-  } catch (err) {
-    threw = true;
-    assert(err.message.includes("validation"), "Should throw validation error");
-  }
-  assert(threw, "Should throw for invalid fact");
+  // Test publishFact with invalid fact - safeExecute returns error instead of throwing
+  const invalidResult = await publisher.publishFact({ invalid: true });
+  assertEqual(invalidResult.success, false, "Should return success: false for invalid fact");
+  assert(invalidResult.error?.message?.includes("validation"), "Error should mention validation");
 
   console.log("  ✅ TunnelPublisher tests passed");
 }

@@ -1,0 +1,3 @@
+{"timestamp":"2026-04-26T22:16:13.495Z","action":"created","tokenId":"d0256db8-f798-49e8-a484-06213c79249d","actor":"test-agent","details":{"agentId":"test-agent","expiresAt":1777245373494}}
+{"timestamp":"2026-04-26T22:16:13.496Z","action":"created","tokenId":"5c1998c2-7c50-481e-be66-9aa25ba9bb78","actor":"test-agent","details":{"agentId":"test-agent","expiresAt":1777245373496}}
+{"timestamp":"2026-04-26T22:16:13.496Z","action":"revoked","tokenId":"5c1998c2-7c50-481e-be66-9aa25ba9bb78","actor":"test-agent","details":{"reason":"security"}}

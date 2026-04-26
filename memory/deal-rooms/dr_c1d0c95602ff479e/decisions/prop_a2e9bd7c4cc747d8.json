@@ -1,0 +1,21 @@
+{
+  "proposalId": "prop_a2e9bd7c4cc747d8",
+  "roomId": "dr_c1d0c95602ff479e",
+  "state": "VOTING",
+  "proposal": {
+    "type": "test",
+    "content": {
+      "type": "test"
+    },
+    "rationale": "Test"
+  },
+  "proposer": "nw-a@test.com",
+  "proposedAt": "2026-04-26T22:16:13.507Z",
+  "deadline": "2026-04-27T22:16:13.507Z",
+  "consensusMode": "unanimous",
+  "votes": [],
+  "requiredVotes": null,
+  "voteThreshold": null,
+  "finalizedAt": null,
+  "auditHash": "5b71014a5357db301d402fa29eb287ab1610c4a56ea2f089f00e395f2b9408c0"
+}

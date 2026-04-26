@@ -1,0 +1,22 @@
+{
+  "proposalId": "prop_7c46154e932c49b8",
+  "roomId": "dr_238abcd5d35e4efa",
+  "state": "WITHDRAWN",
+  "proposal": {
+    "type": "test",
+    "content": {
+      "type": "test"
+    },
+    "rationale": "Test"
+  },
+  "proposer": "wd-a@test.com",
+  "proposedAt": "2026-04-26T22:16:13.504Z",
+  "deadline": "2026-04-27T22:16:13.504Z",
+  "consensusMode": "unanimous",
+  "votes": [],
+  "requiredVotes": null,
+  "voteThreshold": null,
+  "finalizedAt": null,
+  "auditHash": "15aafec2e27ffb8383a1b0a520386a8ab28f027339e92ce2ca7adcd8d9b0290c",
+  "withdrawnAt": "2026-04-26T22:16:13.505Z"
+}
