@@ -43,9 +43,15 @@ class WALWriter {
     this.processing = false;
     this.pendingRotation = false;
     this.walSize = 0;
+    this.shutdownRequested = false;  // P3: Track shutdown state
+    this.shutdownPromise = null;       // P3: Prevent multiple shutdowns
   }
 
   async write(entry) {
+    // P3: Reject writes after shutdown is requested
+    if (this.shutdownRequested) {
+      return Promise.reject(new Error('WALWriter is shutting down'));
+    }
     return new Promise((resolve, reject) => {
       this.queue.push({ entry, resolve, reject });
       this.process();
@@ -137,17 +143,45 @@ class WALWriter {
   }
 
   async shutdown() {
-    // Wait for queue to drain
+    // P3: Prevent multiple concurrent shutdowns
+    if (this.shutdownPromise) {
+      return this.shutdownPromise;
+    }
+
+    this.shutdownPromise = this._doShutdown();
+    return this.shutdownPromise;
+  }
+
+  async _doShutdown() {
+    // P3: Mark as shutting down to reject new writes
+    this.shutdownRequested = true;
+
+    // P3: Wait for queue to drain - check both queue length AND processing state
     while (this.queue.length > 0 || this.processing) {
       await new Promise(resolve => setTimeout(resolve, 10));
     }
-    
+
+    // P3: Final safety check - ensure processing is truly done
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // P3: Only close if fd is valid
     if (this.fd !== null) {
-      const { fdatasyncSync, closeSync } = await import('fs');
-      fdatasyncSync(this.fd);
-      closeSync(this.fd);
+      try {
+        const { fdatasyncSync, closeSync } = await import('fs');
+        fdatasyncSync(this.fd);
+        closeSync(this.fd);
+      } catch (err) {
+        // fd may already be closed, that's ok
+        if (err.code !== 'EBADF') {
+          throw err;
+        }
+      }
       this.fd = null;
     }
+
+    // P3: Reset shutdown state for potential restart
+    this.shutdownRequested = false;
+    this.shutdownPromise = null;
   }
 }
 
