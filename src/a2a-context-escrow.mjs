@@ -26,6 +26,7 @@ import {
   queryValidDuring,
   assertFact 
 } from './temporal-knowledge-graph.mjs';
+import { getCache } from './intelligent-cache.mjs';
 
 // Config and paths
 let config = null;
@@ -46,8 +47,21 @@ const contextListeners = new Set();
 export const EscrowConfig = {
   DEFAULT_BRIEFING_LENGTH: 10,  // Number of messages in briefing
   CONTEXT_TTL_HOURS: 24,        // Context expires after 24h of inactivity
-  AUTO_CLOSE_HOURS: 168         // Auto-close after 7 days
+  AUTO_CLOSE_HOURS: 168,        // Auto-close after 7 days
+  CACHE_CATEGORY: 'context'     // Cache category for intelligent cache
 };
+
+/**
+ * Get context cache instance
+ */
+function getContextCache() {
+  try {
+    return getCache('context-escrow');
+  } catch (e) {
+    // Intelligent cache not initialized, return null
+    return null;
+  }
+}
 
 /**
  * Initialize the context escrow system
@@ -124,6 +138,19 @@ async function initializeSchema() {
   await db.run(`
     CREATE INDEX IF NOT EXISTS idx_messages_time ON context_messages(timestamp)
   `);
+  
+  // NEW: Performance indexes
+  await db.run(`
+    CREATE INDEX IF NOT EXISTS idx_context_peer_status ON context_mappings(peer_name, status)
+  `);
+  
+  await db.run(`
+    CREATE INDEX IF NOT EXISTS idx_context_status_activity ON context_mappings(status, last_activity)
+  `);
+  
+  await db.run(`
+    CREATE INDEX IF NOT EXISTS idx_messages_context_time ON context_messages(context_id, timestamp)
+  `);
 }
 
 /**
@@ -147,11 +174,14 @@ export function generateContextId() {
 export async function getOrCreateContext(contextId, options = {}) {
   const { peerName = 'unknown', purpose = 'A2A Session' } = options;
   
-  // Check cache first
-  if (contextCache.has(contextId)) {
-    const cached = contextCache.get(contextId);
-    cached.isNew = false;
-    return cached;
+  // PERFORMANCE FIX: Check intelligent cache first
+  const cache = getContextCache();
+  if (cache) {
+    const cached = cache.get(contextId);
+    if (cached) {
+      cached.isNew = false;
+      return cached;
+    }
   }
   
   // Check database
@@ -179,7 +209,10 @@ export async function getOrCreateContext(contextId, options = {}) {
       isNew: false
     };
     
-    contextCache.set(contextId, result);
+    // PERFORMANCE FIX: Cache with TTL
+    if (cache) {
+      cache.set(contextId, result, { category: EscrowConfig.CACHE_CATEGORY, tags: ['context'] });
+    }
     return result;
   }
   
@@ -220,7 +253,10 @@ export async function getOrCreateContext(contextId, options = {}) {
     isNew: true
   };
   
-  contextCache.set(contextId, result);
+  // PERFORMANCE FIX: Cache with TTL
+  if (cache) {
+    cache.set(contextId, result, { category: EscrowConfig.CACHE_CATEGORY, tags: ['context'] });
+  }
   
   notifyContextChange(contextId, 'created', { roomId, peerName });
   
@@ -457,8 +493,11 @@ export async function closeContext(contextId, reason = 'manual') {
     ['closed', now, contextId]
   );
   
-  // Remove from cache
-  contextCache.delete(contextId);
+  // PERFORMANCE FIX: Invalidate from intelligent cache
+  const cache = getContextCache();
+  if (cache) {
+    cache.delete(contextId);
+  }
   
   notifyContextChange(contextId, 'closed', { reason, roomId: context.room_id });
   
@@ -584,8 +623,11 @@ function notifyContextChange(contextId, event, details = {}) {
  * Close database connection
  */
 export async function closeContextEscrow() {
-  // Clear cache
-  contextCache.clear();
+  // PERFORMANCE FIX: Clear intelligent cache
+  const cache = getContextCache();
+  if (cache) {
+    cache.invalidateTag('context');
+  }
   
   if (db) {
     await new Promise((resolve) => db.close(resolve));

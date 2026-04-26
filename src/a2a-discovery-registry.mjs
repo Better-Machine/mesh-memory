@@ -16,6 +16,7 @@ import { join } from 'path';
 import sqlite3 from 'sqlite3';
 import { promisify } from 'util';
 import { loadConfig } from '../config.mjs';
+import { getCache } from './intelligent-cache.mjs';
 
 // Config and paths
 let config = null;
@@ -44,6 +45,17 @@ export const CircuitBreakerState = {
   OPEN: 'open',
   HALF_OPEN: 'half-open'
 };
+
+/**
+ * Get peer cache instance
+ */
+function getPeerCache() {
+  try {
+    return getCache('a2a-peers');
+  } catch (e) {
+    return null;
+  }
+}
 
 /**
  * Initialize the discovery registry
@@ -151,6 +163,15 @@ async function initializeSchema() {
   await db.run(`
     CREATE INDEX IF NOT EXISTS idx_changes_peer ON health_changes(peer_name)
   `);
+  
+  // NEW: Performance indexes
+  await db.run(`
+    CREATE INDEX IF NOT EXISTS idx_reqhist_peer_time ON request_history(peer_name, timestamp)
+  `);
+  
+  await db.run(`
+    CREATE INDEX IF NOT EXISTS idx_peerhealth_state ON peer_health(circuit_breaker_state)
+  `);
 }
 
 /**
@@ -163,8 +184,13 @@ async function loadPeersToCache() {
     WHERE p.is_active = 1
   `);
   
+  // PERFORMANCE FIX: Load into intelligent cache
+  const cache = getPeerCache();
   for (const row of rows) {
-    peerCache.set(row.name, rowToPeer(row));
+    const peer = rowToPeer(row);
+    if (cache) {
+      cache.set(peer.name, peer, { category: 'peer', tags: ['peer', `peer:${peer.name}`] });
+    }
   }
 }
 
@@ -559,7 +585,11 @@ export async function unregisterPeer(name) {
     [now, name]
   );
   
-  peerCache.delete(name);
+  // PERFORMANCE FIX: Invalidate peer cache
+  const cache = getPeerCache();
+  if (cache) {
+    cache.invalidateTag('peer');
+  }
   
   console.log(`[a2a-discovery-registry] Unregistered peer: ${name}`);
   return true;
@@ -749,7 +779,11 @@ function notifyHealthChange(peerName, health) {
  * Close database connection
  */
 export async function closeDiscoveryRegistry() {
-  peerCache.clear();
+  // PERFORMANCE FIX: Clear intelligent cache
+  const cache = getPeerCache();
+  if (cache) {
+    cache.invalidateTag('peer');
+  }
   
   if (db) {
     await new Promise((resolve) => db.close(resolve));
