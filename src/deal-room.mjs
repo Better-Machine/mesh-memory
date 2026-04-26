@@ -36,6 +36,9 @@ export const ParticipantRole = {
   OBSERVER: 'observer'          // Read-only access
 };
 
+// Room ID validation regex (format: dr_16alphanumeric)
+const ROOM_ID_REGEX = /^dr_[a-zA-Z0-9]{16}$/;
+
 /**
  * Initialize deal room system
  * @returns {Promise<void>}
@@ -70,12 +73,29 @@ function calculateHash(obj) {
 }
 
 /**
+ * Validate and sanitize room ID to prevent path traversal
+ * @param {string} roomId
+ * @returns {string} Sanitized room ID
+ * @throws {Error} If room ID is invalid
+ */
+function validateRoomId(roomId) {
+  if (!roomId || typeof roomId !== 'string') {
+    throw new Error('Invalid room ID: must be a non-empty string');
+  }
+  if (!ROOM_ID_REGEX.test(roomId)) {
+    throw new Error('Invalid room ID format');
+  }
+  return roomId;
+}
+
+/**
  * Get the path to a room's directory
  * @param {string} roomId
  * @returns {string} Full path
  */
 function getRoomPath(roomId) {
-  return join(DEAL_ROOMS_DIR, roomId);
+  const sanitized = validateRoomId(roomId);
+  return join(DEAL_ROOMS_DIR, sanitized);
 }
 
 /**

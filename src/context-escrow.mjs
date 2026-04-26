@@ -38,6 +38,9 @@ export const EntryType = {
   FACT: 'fact'
 };
 
+// Room ID validation regex (format: dr_16alphanumeric)
+const ROOM_ID_REGEX = /^dr_[a-zA-Z0-9]{16}$/;
+
 // Verification status
 export const VerificationStatus = {
   VERIFIED: 'verified',
@@ -59,12 +62,29 @@ export async function initializeContextEscrow() {
 }
 
 /**
+ * Validate and sanitize room ID to prevent path traversal
+ * @param {string} roomId
+ * @returns {string} Sanitized room ID
+ * @throws {Error} If room ID is invalid
+ */
+function validateRoomId(roomId) {
+  if (!roomId || typeof roomId !== 'string') {
+    throw new Error('Invalid room ID: must be a non-empty string');
+  }
+  if (!ROOM_ID_REGEX.test(roomId)) {
+    throw new Error('Invalid room ID format');
+  }
+  return roomId;
+}
+
+/**
  * Get the path to a room's context file
  * @param {string} roomId
  * @returns {string} Full path to context.kgt.jsonl
  */
 function getContextPath(roomId) {
-  return join(DEAL_ROOMS_DIR, roomId, 'context.kgt.jsonl');
+  const sanitized = validateRoomId(roomId);
+  return join(DEAL_ROOMS_DIR, sanitized, 'context.kgt.jsonl');
 }
 
 /**
