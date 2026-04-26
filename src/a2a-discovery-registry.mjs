@@ -317,7 +317,10 @@ export async function registerPeer(peerConfig) {
       avgLatencyMs: 0,
       p95LatencyMs: 0,
       circuitBreakerState: CircuitBreakerState.CLOSED,
-      consecutiveFailures: 0
+      consecutiveFailures: 0,
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0
     },
     registeredAt: peerCache.has(name) ? peerCache.get(name).registeredAt : now,
     lastUpdated: now
@@ -585,6 +588,9 @@ export async function unregisterPeer(name) {
     [now, name]
   );
   
+  // TEST FIX: Remove from cache so getPeer returns null
+  peerCache.delete(name);
+  
   // PERFORMANCE FIX: Invalidate peer cache
   const cache = getPeerCache();
   if (cache) {
@@ -791,6 +797,21 @@ export async function closeDiscoveryRegistry() {
   }
 }
 
+/**
+ * Reset discovery registry - clears all peers and health data (for testing)
+ * @returns {Promise<void>}
+ */
+export async function resetDiscoveryRegistry() {
+  if (db) {
+    await db.run('DELETE FROM request_history');
+    await db.run('DELETE FROM peer_health');
+    await db.run('DELETE FROM peers');
+  }
+  peerCache.clear();
+  healthListeners.clear();
+  console.log('[a2a-discovery-registry] Registry reset');
+}
+
 // Export all functions
 export default {
   initializeDiscoveryRegistry,
@@ -807,6 +828,7 @@ export default {
   getRegistryStats,
   onPeerHealthChange,
   closeDiscoveryRegistry,
+  resetDiscoveryRegistry,
   CircuitBreakerState,
   HealthThresholds
 };

@@ -1,0 +1,40 @@
+{
+  "roomId": "dr_f633affb7e5d4607",
+  "purpose": "Unanimous vote room",
+  "scope": {
+    "topics": [],
+    "documents": [],
+    "maxParticipants": 3
+  },
+  "policy": {
+    "autoClose": null,
+    "consensusRequired": "unanimous",
+    "dataResidency": "us-east-1",
+    "retentionDays": 2555
+  },
+  "state": "ACTIVE",
+  "createdAt": "2026-04-26T22:30:29.353Z",
+  "updatedAt": "2026-04-26T22:30:29.355Z",
+  "participants": [
+    {
+      "agentId": "uni-a@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:30:29.354Z",
+      "status": "active"
+    },
+    {
+      "agentId": "uni-b@test.com",
+      "role": "negotiator",
+      "joinedAt": "2026-04-26T22:30:29.355Z",
+      "status": "active"
+    },
+    {
+      "agentId": "uni-c@test.com",
+      "role": "reviewer",
+      "joinedAt": "2026-04-26T22:30:29.355Z",
+      "status": "active"
+    }
+  ],
+  "pendingConsents": [],
+  "activatedAt": "2026-04-26T22:30:29.355Z"
+}

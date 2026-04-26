@@ -1,15 +1,15 @@
 # A2A Integration Test Report
 
-**Date:** 2026-04-26T22:22:46.851Z
-**Duration:** 344ms
+**Date:** 2026-04-26T22:31:21.915Z
+**Duration:** 379ms
 
 ## Results
 
 | Metric | Value |
 |--------|-------|
 | Total | 25 |
-| Passed | 22 |
-| Failed | 3 |
+| Passed | 25 |
+| Failed | 0 |
 
 ## Test Cases
 
@@ -34,31 +34,15 @@
 | Should reject invalid peer config | PASS |
 | Should retrieve registered peer | PASS |
 | Should return null for unknown peer | PASS |
-| Should update peer health | FAIL |
-| Should track failed requests | FAIL |
+| Should update peer health | PASS |
+| Should track failed requests | PASS |
 | Should filter by capability | PASS |
-| Should unregister peer | FAIL |
+| Should unregister peer | PASS |
 | Should initialize integration | PASS |
 | Should register and discover peers | PASS |
 
-## Failures
-
-### Should update peer health
-- Expected values to be strictly equal:
-
-5 !== 1
-
-
-### Should track failed requests
-- Expected values to be strictly equal:
-
-5 !== 1
-
-
-### Should unregister peer
-- Should unregister successfully
 
 
 ## Conclusion
 
-⚠️ 3 test(s) failed. Please review.
+✅ All tests passed. Ready for PR.

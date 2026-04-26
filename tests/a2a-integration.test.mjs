@@ -318,10 +318,14 @@ async function runDiscoveryRegistryTests() {
     listAvailablePeers,
     getPeer,
     unregisterPeer,
+    resetDiscoveryRegistry,
     closeDiscoveryRegistry
   } = await import('../src/a2a-discovery-registry.mjs');
   
   await initializeDiscoveryRegistry();
+  
+  // TEST ISOLATION FIX: Reset registry before tests to clear previous state
+  await resetDiscoveryRegistry();
   
   await test('Should register a new peer', async () => {
     const peer = await registerPeer({
@@ -408,10 +412,10 @@ async function runDiscoveryRegistryTests() {
   });
   
   await test('Should unregister peer', async () => {
-    const removed = await unregisterPeer('test-peer-2');
+    const removed = await unregisterPeer('test-peer-1');
     assert.ok(removed, 'Should unregister successfully');
     
-    const peer = await getPeer('test-peer-2');
+    const peer = await getPeer('test-peer-1');
     assert.equal(peer, null);
   });
   
