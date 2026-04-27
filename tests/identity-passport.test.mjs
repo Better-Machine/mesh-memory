@@ -74,6 +74,9 @@ describe('AgentPassport', () => {
       assert.strictEqual(passport.attestations.length, 1);
       assert.strictEqual(passport.attestations[0].type, 'genesis');
       assert.strictEqual(passport.attestations[0].subject.passportId, passport.passportId);
+      // Genesis attestation issuer is human (string), not an agent (object)
+      assert.strictEqual(passport.attestations[0].issuerType, 'human');
+      assert.strictEqual(passport.attestations[0].issuer, 'Human');
     });
   });
 
@@ -140,7 +143,7 @@ describe('AgentPassport', () => {
   });
 
   describe('Attestations', () => {
-    it('should create and verify attestation', async () => {
+    it('should create and verify self-attestation', async () => {
       const passport = await AgentPassport.generate({
         agentName: 'TestAgent'
       });
@@ -149,16 +152,64 @@ describe('AgentPassport', () => {
         type: 'trust',
         issuer: passport.passportId,
         issuerType: 'agent',
-        payload: { trustLevel: 0.9 }
+        payload: { trustLevel: 0.9 },
+        signAsIssuer: true  // Self-attestation, sign with our key
       });
 
       assert.strictEqual(attestation.type, 'trust');
-      assert.strictEqual(attestation.issuer, passport.passportId);
+      assert.strictEqual(attestation.issuer.passportId, passport.passportId);
       assert.ok(attestation.signature, 'signature should be defined');
       assert.strictEqual(attestation.payload.trustLevel, 0.9);
 
+      // Verify self-attestation (no issuer passport needed)
       const verification = passport.verifyAttestation(attestation);
       assert.strictEqual(verification.valid, true);
+    });
+
+    it('should require issuer passport for third-party attestation verification', async () => {
+      const subject = await AgentPassport.generate({
+        agentName: 'Subject'
+      });
+      
+      const issuer = await AgentPassport.generate({
+        agentName: 'Issuer'
+      });
+
+      // Create third-party attestation manually (simulating cross-agent attestation)
+      // In real usage, this would be: issuer creates attestation, signs it, sends to subject
+      const attestation = {
+        type: 'trust-establishment',
+        issuer: {
+          passportId: issuer.passportId,
+          keyFingerprint: issuer.keyFingerprint
+        },
+        issuerType: 'agent',
+        issuedAt: new Date().toISOString(),
+        subject: {
+          passportId: subject.passportId,
+          passportVersion: subject.passportVersion,
+          keyFingerprint: subject.keyFingerprint
+        },
+        payload: { trustLevel: 0.8, relationship: 'peer' },
+        algorithm: 'Ed25519'
+      };
+      
+      // Sign the attestation payload with issuer's key
+      const payloadForSigning = { ...attestation };
+      delete payloadForSigning.signature;
+      attestation.signature = issuer.sign(payloadForSigning);
+      
+      // Add to subject's attestations
+      subject.attestations.push(attestation);
+
+      // Verification without issuer passport should fail
+      const verificationNoIssuer = subject.verifyAttestation(attestation);
+      assert.strictEqual(verificationNoIssuer.valid, false);
+      assert.ok(verificationNoIssuer.reason.includes('issuer passport'));
+
+      // Verification with issuer passport should succeed
+      const verificationWithIssuer = subject.verifyAttestation(attestation, issuer);
+      assert.strictEqual(verificationWithIssuer.valid, true);
     });
 
     it('should create migration attestation', async () => {

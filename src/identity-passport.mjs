@@ -183,17 +183,31 @@ export class AgentPassport {
 
   /**
    * Add an attestation to this passport
+   * @param {Object} options - Attestation options
+   * @param {string} options.type - Attestation type ('genesis', 'trust-establishment', 'migration', 'key-rotation')
+   * @param {string} options.issuer - Issuer identifier (passportId for agents, email/human-id for humans)
+   * @param {string} options.issuerType - 'agent', 'human', or 'system'
+   * @param {Object} options.payload - Attestation payload data
+   * @param {boolean} options.signAsIssuer - Set to true if this agent is the issuer and should sign
+   * @returns {Object} The attestation object
    */
   async addAttestation(options) {
-    const { type, issuer, issuerType = 'agent', payload = {} } = options;
+    const { type, issuer, issuerType = 'agent', payload = {}, signAsIssuer = false } = options;
     
-    if (!this.canSign && issuerType === 'agent') {
-      throw new Error('Cannot create attestation: private key not loaded');
+    // Determine issuer passport ID
+    const issuerId = issuerType === 'agent' ? issuer : null;
+    const isSelfAttestation = issuerId === this.passportId;
+    
+    // Validate signing capability for agent-issued attestations
+    if (issuerType === 'agent' && signAsIssuer && !this.canSign) {
+      throw new Error('Cannot sign attestation: private key not loaded');
     }
     
     const attestation = {
       type,
-      issuer,
+      issuer: issuerType === 'agent' 
+        ? { passportId: issuerId, keyFingerprint: isSelfAttestation ? this.keyFingerprint : null }
+        : issuer,  // For human/system, issuer is a string identifier
       issuerType,
       issuedAt: new Date().toISOString(),
       subject: {
@@ -205,10 +219,16 @@ export class AgentPassport {
       algorithm: 'Ed25519'
     };
     
-    // Sign attestation if we're the issuing agent
-    if (issuerType === 'agent' && this.canSign) {
+    // Sign attestation only if:
+    // 1. We're explicitly asked to sign as issuer (signAsIssuer=true)
+    // 2. We have signing capability (private key loaded)
+    // 3. The issuer matches our passport (self-attestation or we're the issuer)
+    if (signAsIssuer && this.canSign && isSelfAttestation) {
+      attestation.issuer.keyFingerprint = this.keyFingerprint;
       attestation.signature = this.sign(attestation);
     }
+    // Note: Third-party attestations (where issuer !== subject) must be signed by the issuer
+    // outside of this method, as we don't have access to the issuer's private key
     
     this.attestations.push(attestation);
     return attestation;
@@ -217,13 +237,20 @@ export class AgentPassport {
   /**
    * Verify an attestation's signature
    */
-  verifyAttestation(attestation) {
+  /**
+   * Verify an attestation using the issuer's public key
+   * @param {Object} attestation - The attestation to verify
+   * @param {AgentPassport|null} issuerPassport - The issuer's passport (required for non-self agent attestations)
+   * @returns {Object} Verification result
+   */
+  verifyAttestation(attestation, issuerPassport = null) {
     if (!attestation.signature) {
       return { valid: false, reason: 'No signature present' };
     }
     
+    // Validate subject matches this passport
     if (attestation.subject.keyFingerprint !== this.keyFingerprint) {
-      // Check key history
+      // Check key history for rotated keys
       const historicalKey = this.keyHistory.find(
         k => k.fingerprint === attestation.subject.keyFingerprint
       );
@@ -232,10 +259,63 @@ export class AgentPassport {
       }
     }
     
+    // Determine attestation type by issuer
+    const isAgentIssuer = attestation.issuerType === 'agent';
+    const isSelfAttestation = isAgentIssuer && typeof attestation.issuer === 'object' && attestation.issuer.passportId === this.passportId;
+    
     try {
       const { signature, ...payload } = attestation;
-      const isValid = this.verify(payload, signature);
-      return { valid: isValid, reason: isValid ? 'Signature valid' : 'Invalid signature' };
+      
+      if (isSelfAttestation) {
+        // For self-attestations (like genesis where agent signed), verify with own key
+        const isValid = this.verify(payload, signature);
+        return { 
+          valid: isValid, 
+          reason: isValid ? 'Self-attestation signature valid' : 'Invalid self-attestation signature' 
+        };
+      } else if (isAgentIssuer) {
+        // For third-party agent attestations, MUST provide issuer passport
+        if (!issuerPassport) {
+          return { 
+            valid: false, 
+            reason: 'Third-party agent attestation requires issuer passport for verification' 
+          };
+        }
+        
+        // Get issuer fingerprint from attestation
+        const issuerFingerprint = typeof attestation.issuer === 'object' 
+          ? attestation.issuer.keyFingerprint 
+          : null;
+        
+        if (!issuerFingerprint) {
+          return { valid: false, reason: 'Agent attestation missing issuer fingerprint' };
+        }
+        
+        // Verify issuer's key matches attestation
+        if (issuerFingerprint !== issuerPassport.keyFingerprint) {
+          // Check issuer's key history
+          const issuerHistoricalKey = issuerPassport.keyHistory.find(
+            k => k.fingerprint === issuerFingerprint
+          );
+          if (!issuerHistoricalKey) {
+            return { valid: false, reason: 'Issuer key fingerprint mismatch' };
+          }
+        }
+        
+        // Verify using issuer's public key
+        const isValid = issuerPassport.verify(payload, signature);
+        return { 
+          valid: isValid, 
+          reason: isValid ? 'Issuer signature valid' : 'Invalid issuer signature' 
+        };
+      } else {
+        // For human or system attestations - no cryptographic signature to verify
+        // These rely on out-of-band verification (e.g., human identity verification)
+        return { 
+          valid: true, 
+          reason: `Attestation by ${attestation.issuerType} cannot be cryptographically verified` 
+        };
+      }
     } catch (error) {
       return { valid: false, reason: error.message };
     }
