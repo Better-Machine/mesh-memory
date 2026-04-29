@@ -288,6 +288,22 @@ export class TunnelPublisher {
   }
 
   /**
+   * Low-level send hook used by publishFact(). Kept as an instance method so
+   * tests can stub peer responses without opening sockets.
+   * @param {Object} peer - Peer descriptor with url and optional token
+   * @param {Object} fact - The fact to publish
+   * @returns {Promise<Object>} HTTP-like publish result
+   */
+  async publishToPeer(peer, fact) {
+    return postFactToPeer(
+      fact,
+      peer,
+      peer.token || this.token,
+      this.correlationId
+    );
+  }
+
+  /**
    * Publishes a single fact to all configured peers.
    * Validates the fact before sending.
    * Retries failed publishes with exponential backoff.
