@@ -4,6 +4,18 @@ All notable changes to mesh-memory are documented here.
 
 ---
 
+## [1.0.1] — 2026-04-28
+
+### What's in this release
+
+Hotfix release addressing a critical bug in TunnelPublisher.
+
+### Fixed
+
+- **TunnelPublisher missing method** - Added `publishToPeer()` method that was referenced in `publishFact()` but never implemented. This prevented facts from being published to mesh peers. Method properly wraps `postFactToPeer()` with token fallback and correlation ID support.
+
+---
+
 ## [0.1.0] — 2026-03-22
 
 ### What's in this release

@@ -1,6 +1,6 @@
 {
   "name": "mesh-memory",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Per-message cross-agent memory mesh for OpenClaw - Phase 1: Foundation Hardening",
   "type": "module",
   "scripts": {
