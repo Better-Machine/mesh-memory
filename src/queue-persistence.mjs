@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import { openSync, writeSync, fsyncSync, closeSync } from 'fs';
 import { join, basename, resolve } from 'path';
 import { createHash } from 'crypto';
-import { loadConfig } from './config.mjs';
+import { loadConfig } from '../config.mjs';
 import { getBackpressureController } from './backpressure.mjs';
 
 // Config will be loaded on initialization

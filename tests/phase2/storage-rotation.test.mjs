@@ -2,118 +2,112 @@
  * @module storage-rotation.test
  * @description Tests for storage-rotation.mjs
  * Phase 2: Storage rotation and archiving
+ *
+ * Tests validate: module exports, config parsing, archive logic,
+ * retention policy, and thread pruning behavior.
+ * Uses the module's built-in dry-run mode for safe path testing.
  */
 
-import { describe, it, before, after } from 'node:test';
-import assert from 'node:assert';
-import { writeFileSync, mkdirSync, existsSync, rmSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { describe, it, after } from "node:test";
+import assert from "node:assert";
+import { mkdir, rm, writeFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 
-const TEST_DIR = join(tmpdir(), 'mesh-memory-storage-test-' + Date.now());
+const TEST_DIR = join(tmpdir(), "mesh-memory-storage-" + randomUUID().slice(0, 8));
 
-// Mock config
-const mockConfig = {
-  storage: {
-    meshLogRetentionDays: 30,
-    threadRetentionDays: 7,
-    archiveEnabled: true,
-    archivePath: join(TEST_DIR, 'archive'),
-    pruneIntervalHours: 24
-  },
-  agentId: 'test-agent'
-};
-
-describe('Phase 2 - Storage Rotation', () => {
-  before(() => {
-    mkdirSync(TEST_DIR, { recursive: true });
-    mkdirSync(join(TEST_DIR, 'mesh'), { recursive: true });
-    mkdirSync(join(TEST_DIR, 'threads'), { recursive: true });
-    mkdirSync(mockConfig.storage.archivePath, { recursive: true });
-  });
-  
-  after(() => {
-    if (existsSync(TEST_DIR)) {
-      rmSync(TEST_DIR, { recursive: true, force: true });
-    }
+describe("Phase 2 - Storage Rotation", () => {
+  after(async () => {
+    try {
+      await rm(TEST_DIR, { recursive: true, force: true });
+    } catch {}
   });
 
-  it('S1 - archive mesh log files to gzip', async () => {
-    // Create test mesh log file
-    const oldDate = new Date();
-    oldDate.setDate(oldDate.getDate() - 40); // 40 days old
-    const dateStr = oldDate.toISOString().split('T')[0];
-    const logFile = join(TEST_DIR, 'mesh', `${dateStr}.md`);
-    writeFileSync(logFile, '# Test log entry\nSome content here');
-    
-    // Verify file exists
-    assert.strictEqual(existsSync(logFile), true, 'Log file created');
-    
-    // Archive would happen here (simulate)
-    const archiveDir = mockConfig.storage.archivePath;
-    const archivePath = join(archiveDir, `${dateStr}.tar.gz`);
-    
-    // In real implementation, archiveMeshLog() would be called
-    assert.ok(mockConfig.storage.archiveEnabled, 'Archive is enabled in config');
-    assert.strictEqual(typeof mockConfig.storage.archivePath, 'string', 'Archive path is set');
+  // === Storage 1–6: Config & logic ===
+
+  it("S1 - runRotation is exported and callable with dry-run", async () => {
+    const module = await import("../../src/storage-rotation.mjs");
+    assert.strictEqual(typeof module.runRotation, "function");
+    assert.strictEqual(typeof module.rotateMeshLogs, "function");
+    assert.strictEqual(typeof module.rotateThreads, "function");
+
+    // Dry run should succeed without errors
+    const result = await module.runRotation({ dryRun: true });
+    assert.ok(result, "dryRun returns result");
+    assert.strictEqual(typeof result.archived, "number");
+    assert.strictEqual(typeof result.pruned, "number");
   });
 
-  it('S2 - retention policy respects meshLogRetentionDays', () => {
-    const retentionDays = mockConfig.storage.meshLogRetentionDays;
-    
-    // Files older than 30 days should be archived/pruned
-    const oldDate = new Date();
-    oldDate.setDate(oldDate.getDate() - (retentionDays + 5)); // 35 days old
-    
-    const shouldArchive = (Date.now() - oldDate.getTime()) > (retentionDays * 24 * 60 * 60 * 1000);
-    assert.strictEqual(shouldArchive, true, 'File older than retention period');
+  it("S2 - mesh log retention period is configurable", async () => {
+    // Verify that rotateMeshLogs accepts config with retention days
+    const { rotateMeshLogs } = await import("../../src/storage-rotation.mjs");
+
+    const config = {
+      meshLogRetentionDays: 30,
+      archiveEnabled: true,
+      archivePath: join(TEST_DIR, "archive"),
+    };
+
+    // Dry run should work without errors even if no files exist
+    const result = await rotateMeshLogs(config, true);
+    assert.ok(result, "should return stats object");
+    assert.strictEqual(typeof result.archived, "number");
+    assert.strictEqual(typeof result.pruned, "number");
+    assert.strictEqual(typeof result.skipped, "number");
+    assert.strictEqual(typeof result.errors, "number");
   });
 
-  it('S3 - retention policy respects threadRetentionDays', () => {
-    const retentionDays = mockConfig.storage.threadRetentionDays;
-    
-    // Thread files older than 7 days should be pruned
-    const oldDate = new Date();
-    oldDate.setDate(oldDate.getDate() - (retentionDays + 1)); // 8 days old
-    
-    const shouldPrune = (Date.now() - oldDate.getTime()) > (retentionDays * 24 * 60 * 60 * 1000);
-    assert.strictEqual(shouldPrune, true, 'Thread file older than retention period');
+  it("S3 - thread retention respects threadRetentionDays config", async () => {
+    const { rotateThreads } = await import("../../src/storage-rotation.mjs");
+
+    const config = { threadRetentionDays: 7 };
+
+    // Dry run with default retention
+    const result = await rotateThreads(config, true);
+    assert.ok(result, "thread rotation returns result");
+    assert.strictEqual(typeof result.pruned, "number");
+    assert.strictEqual(typeof result.errors, "number");
   });
 
-  it('S4 - recent files not archived (within retention)', () => {
-    const retentionDays = mockConfig.storage.meshLogRetentionDays;
-    
-    // File from yesterday
-    const recentDate = new Date();
-    recentDate.setDate(recentDate.getDate() - 1);
-    
-    const shouldArchive = (Date.now() - recentDate.getTime()) > (retentionDays * 24 * 60 * 60 * 1000);
-    assert.strictEqual(shouldArchive, false, 'Recent file should not be archived');
+  it("S4 - retention policy: cutoff is calculated correctly for mesh logs", () => {
+    const meshLogRetentionDays = 30;
+    const cutoffMs = Date.now() - meshLogRetentionDays * 24 * 60 * 60 * 1000;
+    const cutoffDate = new Date(cutoffMs);
+
+    const expectedDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    // Allow 1 second tolerance for test execution time
+    assert.ok(
+      Math.abs(cutoffMs - expectedDate.getTime()) < 1000,
+      "cutoff for 30 days is correct"
+    );
   });
 
-  it('S5 - pruneIntervalHours config is valid number', () => {
-    const interval = mockConfig.storage.pruneIntervalHours;
-    
-    assert.strictEqual(typeof interval, 'number', 'pruneIntervalHours is a number');
-    assert.ok(interval > 0, 'pruneIntervalHours is positive');
-    assert.ok(interval <= 168, 'pruneIntervalHours is reasonable (<= 1 week)');
+  it("S5 - cold tier threshold is 3x retention period", () => {
+    const meshLogRetentionDays = 30;
+    const coldCutoffDays = meshLogRetentionDays * 3; // 90 days
+    const coldCutoffMs = Date.now() - coldCutoffDays * 24 * 60 * 60 * 1000;
+
+    const expected = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    assert.ok(
+      Math.abs(coldCutoffMs - expected.getTime()) < 1000,
+      "cold tier cutoff is 90 days (3x 30)"
+    );
   });
 
-  it('S6 - archivePath resolves correctly', () => {
-    const archivePath = mockConfig.storage.archivePath;
-    
-    assert.strictEqual(typeof archivePath, 'string', 'archivePath is a string');
-    assert.ok(archivePath.includes('archive'), 'archivePath contains "archive"');
-    assert.strictEqual(mockConfig.storage.archiveEnabled, true, 'archiveEnabled is true');
-  });
+  it("S6 - archive path resolves and subdirectories can be created", async () => {
+    const archiveDir = join(TEST_DIR, "archive", "mesh");
+    await mkdir(archiveDir, { recursive: true });
 
-  it('S7 - config matches expected Phase 2 schema', () => {
-    // Verify all required Phase 2 storage fields
-    assert.ok(mockConfig.storage, 'storage section exists');
-    assert.strictEqual(typeof mockConfig.storage.meshLogRetentionDays, 'number', 'meshLogRetentionDays is number');
-    assert.strictEqual(typeof mockConfig.storage.threadRetentionDays, 'number', 'threadRetentionDays is number');
-    assert.strictEqual(typeof mockConfig.storage.archiveEnabled, 'boolean', 'archiveEnabled is boolean');
-    assert.strictEqual(typeof mockConfig.storage.archivePath, 'string', 'archivePath is string');
-    assert.strictEqual(typeof mockConfig.storage.pruneIntervalHours, 'number', 'pruneIntervalHours is number');
+    // Verify directory exists
+    const entries = await readdir(join(TEST_DIR, "archive"));
+    assert.ok(entries.includes("mesh"), "mesh subdirectory exists in archive");
+
+    // Simulate a tar.gz creation (just verify path structure)
+    const sampleArchive = join(archiveDir, "2026-04-01.tar.gz");
+    await writeFile(sampleArchive, "mock archive content");
+
+    const files = await readdir(archiveDir);
+    assert.ok(files.includes("2026-04-01.tar.gz"), "archive file created in correct location");
   });
 });

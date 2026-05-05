@@ -22,7 +22,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { LRUCache } from 'lru-cache';
-import { loadConfig } from './config.mjs';
+import { loadConfig } from '../config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

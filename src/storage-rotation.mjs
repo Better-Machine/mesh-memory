@@ -2,39 +2,43 @@
  * @module storage-rotation
  * @description Archives and prunes mesh logs and thread contexts based on retention policy.
  * Runs as a background service or cron job.
+ *
+ * Phase 2: Production-hardened with tar.gz archiving, archive verification via tar -tf,
+ * thread manifest-based pruning, and configurable retention tiers.
  */
 
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, basename } from "node:path";
 import { homedir } from "node:os";
-import { mkdir, readdir, stat, rename, rm, readFile } from "node:fs/promises";
-import { createReadStream, createWriteStream } from "node:fs";
-import { createGzip } from "node:zlib";
-import { pipeline } from "node:stream/promises";
-import { loadConfig } from "./config.mjs";
+import { mkdir, readdir, stat, rm, readFile, access } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { loadConfig } from "../config.mjs";
+
+const execFileAsync = promisify(execFile);
 
 const MESH_DIR = resolve(homedir(), ".openclaw/workspace/memory/mesh");
 const THREADS_DIR = resolve(homedir(), ".openclaw/workspace/memory/threads");
 
 /**
- * Archives a single mesh log file to gzip.
+ * Archives a single mesh log file to tar.gz using system tar for reliability.
  * @param {string} filePath - Absolute path to .md file
  * @param {string} archiveDir - Destination directory
  * @returns {Promise<boolean>} Success
  */
 async function archiveMeshLog(filePath, archiveDir) {
-  const baseName = filePath.split("/").pop().replace(".md", "");
+  const baseName = basename(filePath).replace(".md", "");
   const archivePath = resolve(archiveDir, `${baseName}.tar.gz`);
+  const workingDir = dirname(filePath);
+  const fileName = basename(filePath);
 
   try {
-    // Create tar.gz (single file archive for simplicity)
-    const source = createReadStream(filePath);
-    const gzip = createGzip();
-    const dest = createWriteStream(archivePath);
+    // Archive using system tar for full .tar.gz format (not just gzip)
+    await execFileAsync("tar", ["-czf", archivePath, "-C", workingDir, fileName]);
 
-    await pipeline(source, gzip, dest);
+    // Verify archive integrity using tar -tf (tests archive is well-formed)
+    await execFileAsync("tar", ["-tzf", archivePath]);
 
-    // Verify archive integrity
-    await readFile(archivePath); // Will throw if corrupted
+    console.log(`[storage] Archived: ${fileName} → ${archivePath}`);
     return true;
   } catch (err) {
     console.error(`[storage] Archive failed for ${filePath}:`, err.message);
@@ -44,9 +48,13 @@ async function archiveMeshLog(filePath, archiveDir) {
 
 /**
  * Prunes old mesh log files based on retention policy.
+ * Three-tier approach:
+ *   Active (0-retention): Keep in mesh/ dir
+ *   Archive (retention-3x retention): Compress to archive/mesh/ and delete source
+ *   Cold (3x retention+): Delete permanently
  * @param {Object} config - Storage config
  * @param {boolean} dryRun - If true, only log actions without executing
- * @returns {Promise<Object>} Stats { archived, pruned, errors }
+ * @returns {Promise<Object>} Stats { archived, pruned, errors, skipped }
  */
 async function rotateMeshLogs(config, dryRun = false) {
   const { meshLogRetentionDays, archiveEnabled, archivePath } = config;
@@ -57,7 +65,7 @@ async function rotateMeshLogs(config, dryRun = false) {
     await mkdir(archiveDir, { recursive: true });
   }
 
-  const stats = { archived: 0, pruned: 0, errors: 0 };
+  const stats = { archived: 0, pruned: 0, errors: 0, skipped: 0 };
 
   try {
     const files = await readdir(MESH_DIR);
@@ -65,34 +73,50 @@ async function rotateMeshLogs(config, dryRun = false) {
 
     for (const file of mdFiles) {
       const filePath = resolve(MESH_DIR, file);
-      const { mtime } = await stat(filePath);
+      let mtime;
+      try {
+        const st = await stat(filePath);
+        mtime = st.mtime;
+      } catch {
+        stats.errors++;
+        continue;
+      }
 
-      // Archive: older than retention but within 3x retention (90 days default)
-      const archiveThreshold = cutoffMs;
-      const pruneThreshold = Date.now() - meshLogRetentionDays * 3 * 24 * 60 * 60 * 1000;
+      const fileAgeMs = Date.now() - mtime.getTime();
 
-      if (mtime.getTime() < archiveThreshold && mtime.getTime() > pruneThreshold) {
+      // Determine tier
+      if (fileAgeMs <= cutoffMs) {
+        // Active tier: within retention
+        stats.skipped++;
+        continue;
+      }
+
+      const coldCutoffMs = meshLogRetentionDays * 3 * 24 * 60 * 60 * 1000;
+
+      if (fileAgeMs <= coldCutoffMs) {
+        // Archive tier: between retention and 3x retention
         if (archiveEnabled && !dryRun) {
           const success = await archiveMeshLog(filePath, archiveDir);
           if (success) {
             await rm(filePath);
             stats.archived++;
-            console.log(`[storage] Archived: ${file}`);
+            console.log(`[storage] Archived and removed: ${file}`);
           } else {
             stats.errors++;
           }
         } else if (dryRun) {
           console.log(`[storage] [DRY-RUN] Would archive: ${file}`);
+          stats.archived++;
         }
-      }
-      // Prune: older than 3x retention
-      else if (mtime.getTime() < pruneThreshold) {
+      } else {
+        // Cold tier: beyond 3x retention — delete permanently
         if (!dryRun) {
           await rm(filePath);
           stats.pruned++;
-          console.log(`[storage] Pruned: ${file}`);
+          console.log(`[storage] Pruned (cold tier): ${file}`);
         } else {
-          console.log(`[storage] [DRY-RUN] Would prune: ${file}`);
+          console.log(`[storage] [DRY-RUN] Would prune (cold tier): ${file}`);
+          stats.pruned++;
         }
       }
     }
