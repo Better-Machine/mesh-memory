@@ -288,6 +288,18 @@ export class TunnelPublisher {
   }
 
   /**
+   * Publishes a fact to a single peer.
+   * Wrapper around postFactToPeer for internal use.
+   * @param {Object} peer - The peer configuration object
+   * @param {Object} fact - The fact to publish
+   * @returns {Promise<Object>} { ok: boolean, status: number, data: Object|null }
+   */
+  async publishToPeer(peer, fact) {
+    const token = peer.token || this.token;
+    return postFactToPeer(fact, peer, token, this.correlationId);
+  }
+
+  /**
    * Publishes a single fact to all configured peers.
    * Validates the fact before sending.
    * Retries failed publishes with exponential backoff.
