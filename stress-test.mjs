@@ -291,7 +291,7 @@ async function runLayer2Tests() {
 
   const testConfig = {
     agentId: "test-agent",
-    receiverPort: 18801,
+    receiverPort: 18804,
     receiverToken: "test-token",
     peers: [
       { name: "peer-a", url: "http://localhost:18899", token: "tok-a" },
@@ -658,7 +658,7 @@ async function main() {
 
   // --- Test 3: Receiver delivery (if running) ---
   console.log("[stress-test] Test 3: Receiver delivery (50 events)");
-  const receiverUrl = "http://localhost:18801";
+  const receiverUrl = "http://localhost:18804";
   const receiverToken = "your-receiver-token-here";
 
   const delivery = await testReceiver(receiverUrl, receiverToken, 50);

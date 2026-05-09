@@ -71,7 +71,7 @@ const SKIP_CHECKS    = hasFlag("skip-checks");
 const TIMEOUT_SEC    = parseInt(flag("timeout") || "300", 10);
 let   AGENT_ID       = flag("agent-id");
 let   PEER_COUNT     = flag("peers") ? parseInt(flag("peers"), 10) : null;
-const RECEIVER_PORT  = parseInt(flag("receiver-port") || "18801", 10);
+const RECEIVER_PORT  = parseInt(flag("receiver-port") || "18804", 10);
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 const HOME        = homedir();

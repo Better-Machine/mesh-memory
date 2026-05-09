@@ -47,7 +47,7 @@ async function sendToPeer(peer, proposal, timeoutMs) {
   if (peer.threadUrl) {
     peerThreadUrl = peer.threadUrl;
   } else {
-    const substituted = peer.url.replace(/:18801\b/, ":18802");
+    const substituted = peer.url.replace(/:18804\b/, ":18802");
     if (substituted === peer.url) {
       console.warn(`[thread-propose] Could not substitute port for peer ${peer.name} — threadUrl not set and port 18801 not found in url. Using url as-is.`);
     }
