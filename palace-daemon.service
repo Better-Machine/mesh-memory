@@ -1,0 +1,54 @@
+[Unit]
+Description=Palace Memory Daemon
+Documentation=https://docs.openclaw.ai/mesh-memory/palace
+After=network.target
+
+[Service]
+Type=simple
+User=erik-ross
+Group=erik-ross
+WorkingDirectory=/home/erik-ross/.openclaw/workspace/projects/mesh-memory
+
+# Environment
+Environment="PALACE_PORT=18810"
+Environment="PALACE_HOST=0.0.0.0"
+Environment="PALACE_DB_PATH=/home/erik-ross/.openclaw/workspace/memory/palace/critical-facts.db"
+Environment="PALACE_PASSPORT_PATH=/home/erik-ross/.openclaw/workspace/projects/mesh-memory/palace-mvp/agent-passport.json"
+Environment="PALACE_LOG_LEVEL=INFO"
+Environment="PALACE_CLEANUP_INTERVAL=60"
+
+# Node.js execution
+ExecStart=/usr/bin/node /home/erik-ross/.openclaw/workspace/projects/mesh-memory/palace-daemon.mjs
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/erik-ross/.openclaw/workspace/memory/palace
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RemoveIPC=true
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=50%
+TasksMax=50
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=palace-daemon
+
+[Install]
+WantedBy=default.target
