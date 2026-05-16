@@ -1,6 +1,6 @@
 {
   "agentId": "agent-alpha",
-  "receiverPort": 18801,
+  "receiverPort": 18804,
   "receiverToken": "test-token-m1-1777234213168",
   "threadPort": 18802,
   "watchPath": "~/.openclaw/agents/main/sessions/",

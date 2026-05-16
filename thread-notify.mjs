@@ -98,7 +98,7 @@ async function notifyDecline(proposal, reason) {
     if (peer.threadUrl) {
       peerThreadUrl = peer.threadUrl;
     } else {
-      const substituted = peer.url.replace(/:18801\b/, ":18802");
+      const substituted = peer.url.replace(/:18804\b/, ":18802");
       if (substituted === peer.url) {
         console.warn(`[thread-notify] Could not substitute port for peer ${participantId} — threadUrl not set and port 18801 not found in url. Using url as-is.`);
       }

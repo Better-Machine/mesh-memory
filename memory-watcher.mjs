@@ -225,7 +225,9 @@ async function handleFileChange(filePath, config) {
  */
 async function main() {
   const config = loadConfig();
-  const watchPaths = config.watchPaths.map((p) =>
+  // Config uses `watchPath` (singular string), code expects `watchPaths` (array)
+  const rawPaths = config.watchPaths || [config.watchPath];
+  const watchPaths = rawPaths.filter(Boolean).map((p) =>
     resolve(p.replace("~", homedir()))
   );
 

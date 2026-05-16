@@ -59,7 +59,7 @@ async function runTests() {
     }
     
     try {
-      const response = await fetch('http://localhost:18801/health', {
+      const response = await fetch('http://localhost:18804/health', {
         headers
       });
       

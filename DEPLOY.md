@@ -102,18 +102,18 @@ Expected: `v18.0.0` or higher. mesh-memory uses ES modules (`import`/`export`) a
 > **Tested on:** Node v18, v20, v22 (all clean). Node v25 requires `better-sqlite3 ^12.0.0` (included since e628bee).
 
 ### 4. Verify network reachability between agents
-From each machine, ping every peer's port 18801:
+From each machine, ping every peer's port 18804:
 ```bash
 # From Agent B (.23), test Agent A (.22):
-nc -zv 192.168.1.101 18801
+nc -zv 192.168.1.101 18804
 # Expected before install: "Connection refused" (port not open yet — this is correct)
 # Expected after install: "Connection succeeded"
 
 # From Agent B (.23), test Agent C (.24):
-nc -zv 192.168.1.103 18801
+nc -zv 192.168.1.103 18804
 ```
 
-> **Note for agents:** "Connection refused" before install is expected and correct. The receiver process that opens port 18801 doesn't exist yet. Do not interpret this as a firewall problem during pre-install checks.
+> **Note for agents:** "Connection refused" before install is expected and correct. The receiver process that opens port 18804 doesn't exist yet. Do not interpret this as a firewall problem during pre-install checks.
 
 ### 5. Verify LCM database path (for the bridge component)
 ```bash
@@ -165,7 +165,7 @@ Edit `mesh-memory.config.local.json`:
 ```json
 {
   "agentId": "YOUR_AGENT_ID",
-  "receiverPort": 18801,
+  "receiverPort": 18804,
   "receiverToken": "YOUR_TOKEN_FROM_STEP_3",
   "peers": [],
   "watchPaths": [
@@ -197,14 +197,14 @@ mkdir -p ~/.openclaw/agents/main/sessions
 ```
 The watcher will activate when session files appear.
 
-### Step 6: Open the firewall for port 18801
+### Step 6: Open the firewall for port 18804
 ```bash
-sudo ufw allow from 192.168.1.0/24 to any port 18801
+sudo ufw allow from 192.168.1.0/24 to any port 18804
 sudo ufw reload
 ```
 Replace `192.168.1.0/24` with your actual LAN subnet if different.
 
-**Do not expose port 18801 to the internet.** This service is LAN-only.
+**Do not expose port 18804 to the internet.** This service is LAN-only.
 
 ---
 
@@ -292,7 +292,7 @@ npm run receiver
 ```
 Expected output:
 ```
-[receiver] Listening on port 18801
+[receiver] Listening on port 18804
 [receiver] Agent: agent-b
 [receiver] Ready for inbound events
 ```
@@ -301,7 +301,7 @@ Expected output:
 
 From each peer machine, confirm the receiver is reachable:
 ```bash
-curl -s http://192.168.1.102:18801/health
+curl -s http://192.168.1.102:18804/health
 # Expected: {"status":"ok","agentId":"agent-b","uptime":...}
 ```
 
