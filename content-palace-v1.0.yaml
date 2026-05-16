@@ -1,0 +1,72 @@
+---
+id: palace-v1-0-2026-05-16
+title: "Shipping Palace: Agent Memory That Survives Session Boundaries"
+date: 2026-05-16
+status: approved
+author: Liz
+channel: linkedin
+type: long-form
+tags: [AI, AgenticAI, MemoryArchitecture, OpenSource, MeshMemory]
+---
+
+# LinkedIn Post — Palace Memory System v1.0
+
+## Body
+
+I just shipped something I've been chasing for months: **agent memory that survives the session boundary.**
+
+We built a 4-layer memory architecture we call **Palace** (because every agent deserves a memory palace).
+
+**L0: Identity** — Portable agent passport. Who this agent is, what they do, their hardware fingerprint.
+
+**L1: Critical Facts** — The standing instructions that must survive every restart. Behavioral rules. Methodology gates. Project blockers. ~1,300 tokens auto-loaded on every wake-up.
+
+**L2: Deep Memory** — Searchable long-term storage. Full-text search. Lessons learned. Event history.
+
+**L3: Temporal Knowledge Graph** — Time-travel queries. Audit trails. Hash-chain verification. Know what was true when.
+
+**L4: Kingdom State** — Multi-agent coordination. Vector clocks. Distributed consensus. (The mesh part of mesh-memory.)
+
+The brutal realization: every AI session starts as a blank slate. All context — user preferences, project state, standing instructions — gets re-injected or re-learned. That's fine for chatbots. Catastrophic for agents running 24/7 across multiple machines.
+
+Palace changes that. On session start, the OpenClaw bootstrap hook loads 12 critical facts before the first user message. Standing instructions. QA gates. Behavioral discipline rules. The stuff that *has* to be there.
+
+It's working now on my primary agent. She wakes up knowing her role, her constraints, her blockers. Not because I reminded her. Because it's architecture.
+
+Next: mesh sync. Getting Ray and Woodhouse their own Palaces, then wiring them together so knowledge propagates.
+
+Building this with @BobbyRay (100.66.164.77), @Woodhouse (100.127.83.84), and @Liz (100.105.111.69). Three agents, one vision: persistent identity and portable memory.
+
+#AI #AgenticAI #MemoryArchitecture #OpenSource #MeshMemory
+
+---
+
+## Assets Required
+
+| Asset | Status | Notes |
+|-------|--------|-------|
+| Hero image | ⏳ Needed | DALL-E: "Palace castle made of circuit boards, ethereal lighting, futuristic meets classical architecture" |
+| Better Machine logo | ✅ Available | /branding/better-machine/horizontal-dark.png |
+| GitHub link | ✅ Ready | https://github.com/Better-Machine/mesh-memory |
+
+---
+
+## Scheduling
+
+- **Post date:** 2026-05-16 (Saturday) or 2026-05-19 (Tuesday)
+- **Time:** 09:00-11:00 ET or 14:00-17:00 ET
+- **Approval:** Erik Ross required
+
+---
+
+## Links
+
+- **Repository:** https://github.com/Better-Machine/mesh-memory
+- **Documentation:** https://github.com/Better-Machine/mesh-memory/blob/main/PALACE.md
+- **Release:** Palace Memory System v1.0 (merged 2026-05-16)
+
+---
+
+**Filed:** 2026-05-16 by Liz
+**Location:** Better Machine Content Queue
+**Action Required:** Add to Buffer or schedule via Bot API
