@@ -1,0 +1,16 @@
+[Unit]
+Description=Palace Memory Daemon
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.openclaw/workspace/projects/mesh-memory
+ExecStart=/usr/bin/node palace-daemon.mjs
+Restart=always
+RestartSec=5
+Environment="NODE_ENV=production"
+Environment="PALACE_DB_PATH=%h/.openclaw/workspace/memory/palace/critical-facts.db"
+Environment="PALACE_PASSPORT_PATH=%h/.openclaw/workspace/projects/mesh-memory/palace-mvp/agent-passport.json"
+
+[Install]
+WantedBy=default.target
