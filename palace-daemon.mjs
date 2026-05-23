@@ -16,6 +16,7 @@ import { existsSync, readFileSync } from 'fs';
 import { mkdirSync } from 'fs';
 import path from 'path';
 import { homedir } from 'os';
+import { createA2ABridge } from './a2a-bridge.mjs';
 
 // Configuration
 const DEFAULT_CONFIG = {
@@ -59,6 +60,7 @@ let loader = null;
 let cleanupTimer = null;
 let server = null;
 let isShuttingDown = false;
+let a2aBridge = null;
 
 // Metrics
 const metrics = {
@@ -152,6 +154,22 @@ async function handleRequest(req, res) {
         
       case 'GET /a2a/':
         result = await handleA2ARoot();
+        break;
+        
+      case 'POST /a2a/tasks/send':
+        result = await handleA2ASendTask(req);
+        break;
+        
+      case 'POST /a2a/tasks/get':
+        result = await handleA2AGetTask(url);
+        break;
+        
+      case 'GET /a2a/tasks/list':
+        result = await handleA2AListTasks(url);
+        break;
+        
+      case 'POST /a2a/tasks/cancel':
+        result = await handleA2ACancelTask(req);
         break;
         
       case 'GET /health':
@@ -490,6 +508,123 @@ async function handleA2ARoot() {
       layers: ['L0', 'L1', 'L2', 'L3', 'L4']
     }
   };
+}
+
+/**
+ * POST /a2a/tasks/send - Create and execute A2A task
+ */
+async function handleA2ASendTask(req) {
+  // Initialize bridge if not already done
+  if (!a2aBridge) {
+    const { createA2ABridge } = await import('./a2a-bridge.mjs');
+    a2aBridge = createA2ABridge({
+      loader: loader,
+      gatehouseUrl: 'http://localhost:18811',
+      logger: logger
+    });
+  }
+  
+  // Parse request body
+  const body = await parseBody(req);
+  
+  // Create task via bridge
+  const result = await a2aBridge.handleSendTask(body);
+  
+  return {
+    success: true,
+    data: result
+  };
+}
+
+/**
+ * POST /a2a/tasks/get - Get task status
+ */
+async function handleA2AGetTask(url) {
+  if (!a2aBridge) {
+    return { success: false, error: { message: 'A2A bridge not initialized' }, statusCode: 503 };
+  }
+  
+  const taskId = url.searchParams.get('id');
+  if (!taskId) {
+    return { success: false, error: { message: 'Task ID required' }, statusCode: 400 };
+  }
+  
+  const task = a2aBridge.getTask(taskId);
+  if (!task) {
+    return { success: false, error: { message: 'Task not found' }, statusCode: 404 };
+  }
+  
+  return { success: true, data: task };
+}
+
+/**
+ * GET /a2a/tasks/list - List tasks
+ */
+async function handleA2AListTasks(url) {
+  if (!a2aBridge) {
+    return { success: true, data: { tasks: [], count: 0 } };
+  }
+  
+  const status = url.searchParams.get('status');
+  const limit = parseInt(url.searchParams.get('limit')) || 10;
+  
+  let tasks = Array.from(a2aBridge.tasks.values());
+  
+  if (status) {
+    tasks = tasks.filter(t => t.status === status);
+  }
+  
+  tasks = tasks.slice(0, limit);
+  
+  return {
+    success: true,
+    data: {
+      tasks,
+      count: tasks.length,
+      stats: a2aBridge.getStats()
+    }
+  };
+}
+
+/**
+ * POST /a2a/tasks/cancel - Cancel a task
+ */
+async function handleA2ACancelTask(req) {
+  if (!a2aBridge) {
+    return { success: false, error: { message: 'A2A bridge not initialized' }, statusCode: 503 };
+  }
+  
+  const body = await parseBody(req);
+  const taskId = body.id;
+  
+  if (!taskId) {
+    return { success: false, error: { message: 'Task ID required' }, statusCode: 400 };
+  }
+  
+  const canceled = a2aBridge.cancelTask(taskId);
+  
+  return {
+    success: canceled,
+    data: { taskId, canceled }
+  };
+}
+
+/**
+ * Parse JSON body from request
+ */
+async function parseBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', chunk => data += chunk);
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(data));
+      } catch (err) {
+        reject(new Error('Invalid JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
 }
 
 /**
