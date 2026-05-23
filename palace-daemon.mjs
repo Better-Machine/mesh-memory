@@ -12,7 +12,7 @@ import { URL } from 'url';
 import { CriticalFactsLoader, createLoader, quickLoad } from './critical-facts-loader.mjs';
 import { PalaceLogger, LogLevel } from './palace-logger.mjs';
 import { PalaceError } from './palace-errors.mjs';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { mkdirSync } from 'fs';
 import path from 'path';
 import { homedir } from 'os';
@@ -146,6 +146,14 @@ async function handleRequest(req, res) {
     let result;
     
     switch (route) {
+      case 'GET /.well-known/agent.json':
+        result = await handleAgentCard();
+        break;
+        
+      case 'GET /a2a/':
+        result = await handleA2ARoot();
+        break;
+        
       case 'GET /health':
         result = await handleHealth();
         break;
@@ -364,6 +372,122 @@ async function handleMetrics() {
         maxWakeUpFacts: config.maxWakeUpFacts,
         maxWakeUpTokens: config.maxWakeUpTokens
       }
+    }
+  };
+}
+
+/**
+ * GET /.well-known/agent.json - A2A v1.0 Agent Card endpoint
+ */
+async function handleAgentCard() {
+  // Load passport data if available
+  let passportData = null;
+  try {
+    if (existsSync(config.passportPath)) {
+      passportData = JSON.parse(readFileSync(config.passportPath, 'utf8'));
+    }
+  } catch (err) {
+    logger.warn('Failed to load passport for Agent Card', { error: err.message });
+  }
+
+  // Build A2A v1.0 Agent Card
+  const agentCard = {
+    name: passportData?.agentId || 'PalaceAgent',
+    description: passportData?.description || 'Palace memory daemon - L0-L4 hierarchical agent memory',
+    url: `http://${config.host}:${config.port}/a2a/`,
+    version: '1.0.0',
+    capabilities: {
+      a2aVersion: '1.0.0',
+      supportsStreaming: true,
+      supportsPushNotifications: false
+    },
+    skills: [
+      {
+        id: 'palace-memory-l1',
+        name: 'Critical Facts (L1)',
+        description: 'Always-loaded critical facts and preferences',
+        tags: ['memory', 'l1', 'critical-facts'],
+        examples: [
+          'What are your critical facts?',
+          'Store this as critical: project deadline is Friday'
+        ]
+      },
+      {
+        id: 'palace-memory-l2',
+        name: 'Deep Memory (L2)',
+        description: 'Searchable deep memory with semantic retrieval',
+        tags: ['memory', 'l2', 'search', 'semantic'],
+        examples: [
+          'Search memory for past decisions about architecture',
+          'What do you remember about project X?'
+        ]
+      },
+      {
+        id: 'palace-memory-l3',
+        name: 'Temporal Knowledge Graph (L3)',
+        description: 'Time-travel knowledge graph with audit trails and retraction',
+        tags: ['memory', 'l3', 'temporal', 'kg', 'audit'],
+        examples: [
+          'What did we decide on March 15?',
+          'Show me the history of this fact'
+        ]
+      },
+      {
+        id: 'palace-memory-l4',
+        name: 'Kingdom (L4)',
+        description: 'Multi-agent coordination with vector clocks and consensus',
+        tags: ['memory', 'l4', 'kingdom', 'multi-agent', 'consensus'],
+        examples: [
+          'Coordinate with other agents on this task',
+          'What is the fleet consensus on X?'
+        ]
+      }
+    ],
+    authentication: {
+      schemes: ['none'],
+      credentials: null
+    },
+    defaultInputModes: ['text', 'data'],
+    defaultOutputModes: ['text', 'data'],
+    // Palace-specific extensions
+    extensions: {
+      palace: {
+        l0Passport: passportData?.passport || null,
+        l1FactCount: loader?.db ? 'available' : 'unavailable',
+        apiEndpoints: [
+          '/health',
+          '/wake-up-context',
+          '/facts/critical',
+          '/facts/search',
+          '/metrics'
+        ]
+      }
+    }
+  };
+
+  return {
+    success: true,
+    data: agentCard
+  };
+}
+
+/**
+ * GET /a2a/ - A2A protocol root endpoint
+ */
+async function handleA2ARoot() {
+  return {
+    success: true,
+    data: {
+      protocol: 'A2A',
+      version: '1.0.0',
+      status: 'active',
+      endpoints: {
+        agentCard: '/.well-known/agent.json',
+        health: '/health',
+        wakeUp: '/wake-up-context'
+      },
+      capabilities: ['memory', 'coordination'],
+      layers: ['L0', 'L1', 'L2', 'L3', 'L4']
     }
   };
 }
