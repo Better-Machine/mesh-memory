@@ -6,7 +6,7 @@
  * @version 1.0.0
  */
 
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 
 /**
  * A2A Bridge class - translates A2A protocol to mesh-memory operations
@@ -40,7 +40,7 @@ export class A2ABridge {
     const { message, skillId, parentId } = request;
     
     // Generate task ID
-    const taskId = uuidv4();
+    const taskId = randomUUID();
     const now = new Date().toISOString();
     
     // Create task state
