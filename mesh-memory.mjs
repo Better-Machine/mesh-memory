@@ -10,7 +10,7 @@
 
 import http from 'node:http';
 import { URL } from 'node:url';
-import { watch } from 'chokidar';
+import { watch as fsWatch } from 'node:fs';
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { readFile, stat, mkdir, appendFile, writeFile } from 'node:fs/promises';
@@ -411,9 +411,10 @@ function startSyncLoop() {
   log('INFO', 'Sync loop started', { intervalMs: CONFIG.syncIntervalMs });
 }
 
-// ─── Memory Watcher ──────────────────────────────────────────────────────────
+// ─── Memory Watcher (native fs.watch) ────────────────────────────────────────
 
 const fileOffsets = new Map();
+const watchers = new Map();
 
 async function readDelta(filePath) {
   const offset = fileOffsets.get(filePath) || 0;
@@ -483,22 +484,45 @@ function startWatcher() {
     return;
   }
 
-  const watcher = watch(watchDir, {
-    persistent: true,
-    ignoreInitial: false,
-    depth: 1,
-    awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
+  // Watch existing JSONL files
+  function watchFile(filePath) {
+    if (watchers.has(filePath)) return;
+
+    const w = fsWatch(filePath, (eventType) => {
+      if (eventType === 'change') {
+        processSessionFile(filePath).catch(err =>
+          log('WARN', `Watcher error: ${filePath}`, { error: err.message })
+        );
+      }
+    });
+
+    watchers.set(filePath, w);
+    // Initial scan
+    processSessionFile(filePath).catch(() => {});
+  }
+
+  // Watch directory for new files
+  const dirWatcher = fsWatch(watchDir, { recursive: false }, (eventType, filename) => {
+    if (filename && filename.endsWith('.jsonl')) {
+      const fullPath = resolve(watchDir, filename);
+      if (eventType === 'rename' && existsSync(fullPath)) {
+        watchFile(fullPath);
+      }
+    }
   });
 
-  watcher.on('add', (path) => {
-    if (path.endsWith('.jsonl')) processSessionFile(path);
-  });
+  // Watch existing files
+  const { readdirSync } = await import('node:fs');
+  try {
+    const files = readdirSync(watchDir);
+    for (const f of files) {
+      if (f.endsWith('.jsonl')) {
+        watchFile(resolve(watchDir, f));
+      }
+    }
+  } catch {}
 
-  watcher.on('change', (path) => {
-    if (path.endsWith('.jsonl')) processSessionFile(path);
-  });
-
-  log('INFO', 'Memory watcher started', { dir: watchDir });
+  log('INFO', 'Memory watcher started', { dir: watchDir, files: watchers.size });
 }
 
 // ─── HTTP Server ──────────────────────────────────────────────────────────────
