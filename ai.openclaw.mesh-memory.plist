@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.mesh-memory</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>/Users/FOS_Erik/.openclaw/workspace/projects/mesh-memory/mesh-memory.mjs</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/FOS_Erik/.openclaw/workspace/projects/mesh-memory</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MESH_PORT</key>
+        <string>18805</string>
+        <key>MESH_HOST</key>
+        <string>0.0.0.0</string>
+        <key>MESH_DB_PATH</key>
+        <string>/Users/FOS_Erik/.openclaw/workspace/memory/palace/mesh-memory.db</string>
+        <key>MESH_PASSPORT</key>
+        <string>/Users/FOS_Erik/.openclaw/workspace/projects/mesh-memory/palace-mvp/agent-passport.json</string>
+        <key>MESH_SYNC_INTERVAL</key>
+        <string>30000</string>
+        <key>MESH_LOG_LEVEL</key>
+        <string>INFO</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/openclaw/mesh-memory.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/openclaw/mesh-memory.err.log</string>
+</dict>
+</plist>

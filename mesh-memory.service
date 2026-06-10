@@ -1,0 +1,19 @@
+[Unit]
+Description=mesh-memory v2 — Agent shared memory daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /home/erik-ross/.openclaw/workspace/projects/mesh-memory/mesh-memory.mjs
+WorkingDirectory=/home/erik-ross/.openclaw/workspace/projects/mesh-memory
+Restart=always
+RestartSec=5
+Environment="MESH_PORT=18805"
+Environment="MESH_HOST=0.0.0.0"
+Environment="MESH_DB_PATH=/home/erik-ross/.openclaw/workspace/memory/palace/mesh-memory.db"
+Environment="MESH_PASSPORT=/home/erik-ross/.openclaw/workspace/projects/mesh-memory/palace-mvp/agent-passport.json"
+Environment="MESH_SYNC_INTERVAL=30000"
+Environment="MESH_LOG_LEVEL=INFO"
+
+[Install]
+WantedBy=default.target
