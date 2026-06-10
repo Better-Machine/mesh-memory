@@ -12,7 +12,7 @@ import http from 'node:http';
 import { URL } from 'node:url';
 import { watch as fsWatch } from 'node:fs';
 import Database from 'better-sqlite3';
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { readFile, stat, mkdir, appendFile, writeFile } from 'node:fs/promises';
 import { resolve, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -512,7 +512,6 @@ function startWatcher() {
   });
 
   // Watch existing files
-  const { readdirSync } = await import('node:fs');
   try {
     const files = readdirSync(watchDir);
     for (const f of files) {
