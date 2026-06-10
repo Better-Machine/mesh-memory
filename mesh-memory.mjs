@@ -322,16 +322,15 @@ async function syncWithPeer(peer) {
       received++;
     }
 
-    // Update sync state
+    // Update sync state — preserve last_success (push will update it)
     db.prepare(`
       INSERT INTO sync_state (peer_name, last_sync, last_success, status)
-      VALUES (?, ?, ?, 'active')
+      VALUES (?, ?, COALESCE((SELECT last_success FROM sync_state WHERE peer_name = ?), '1970-01-01T00:00:00Z'), 'active')
       ON CONFLICT(peer_name) DO UPDATE SET
         last_sync = excluded.last_sync,
-        last_success = excluded.last_success,
         status = 'active',
         failure_count = 0
-    `).run(peer.name, new Date().toISOString(), new Date().toISOString());
+    `).run(peer.name, new Date().toISOString(), peer.name);
 
     if (received > 0) {
       log('INFO', `Received ${received} facts from ${peer.name}`);
@@ -386,6 +385,18 @@ async function pushFactsToPeer(peer) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     log('INFO', `Pushed ${facts.length} facts to ${peer.name}`);
+
+    // Update last_success — only after successful push
+    db.prepare(`
+      INSERT INTO sync_state (peer_name, last_sync, last_success, status)
+      VALUES (?, ?, ?, 'active')
+      ON CONFLICT(peer_name) DO UPDATE SET
+        last_sync = excluded.last_sync,
+        last_success = excluded.last_success,
+        status = 'active',
+        failure_count = 0
+    `).run(peer.name, new Date().toISOString(), new Date().toISOString());
+
     return { success: true, pushed: facts.length };
   } catch (err) {
     log('WARN', `Push failed: ${peer.name}`, { error: err.message });
