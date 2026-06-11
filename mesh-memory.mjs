@@ -32,7 +32,7 @@ const CONFIG = {
   port: parseInt(process.env.MESH_PORT) || 18805,
   host: process.env.MESH_HOST || '0.0.0.0',
   dbPath: process.env.MESH_DB_PATH || join(PALACE, 'mesh-memory.db'),
-  passportPath: process.env.MESH_PASSPORT || join(PROJECTS, 'palace-mvp/agent-passport.json'),
+  passportPath: process.env.MESH_PASSPORT || join(PROJECTS, 'mesh-memory/mesh-memory.passport.json'),
   syncIntervalMs: parseInt(process.env.MESH_SYNC_INTERVAL) || 30000,
   peerTimeoutMs: parseInt(process.env.MESH_PEER_TIMEOUT) || 5000,
   maxQueueDepth: parseInt(process.env.MESH_MAX_QUEUE) || 500,
