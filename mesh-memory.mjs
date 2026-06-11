@@ -200,16 +200,35 @@ function loadPeers() {
     const contacts = JSON.parse(readFileSync(CONTACTS, 'utf-8'));
     const peers = [];
 
-    for (const [key, contact] of Object.entries(contacts)) {
-      if (contact.relationship === 'peer' && contact.machine) {
-        const tailscaleIp = resolveTailscaleIp(contact.machine);
-        if (tailscaleIp) {
+    // NEW FORMAT: { peers: [{ name, hostname, ip }] }
+    if (contacts.peers && Array.isArray(contacts.peers)) {
+      for (const peer of contacts.peers) {
+        if (peer.name && (peer.hostname || peer.ip)) {
+          const url = peer.hostname
+            ? `http://${peer.hostname}:18805`
+            : `http://${resolveTailscaleIp(peer.ip)}:18805`;
           peers.push({
-            name: contact.name || key,
-            url: `http://${tailscaleIp}:18805`,
-            machine: contact.machine,
-            agentId: key,
+            name: peer.name,
+            url,
+            machine: peer.ip,
+            agentId: peer.name.toLowerCase(),
           });
+        }
+      }
+    }
+    // OLD FORMAT: { "Liz": { relationship: "peer", machine: "192.168.50.23" } }
+    else {
+      for (const [key, contact] of Object.entries(contacts)) {
+        if (contact.relationship === 'peer' && contact.machine) {
+          const tailscaleIp = resolveTailscaleIp(contact.machine);
+          if (tailscaleIp) {
+            peers.push({
+              name: contact.name || key,
+              url: `http://${tailscaleIp}:18805`,
+              machine: contact.machine,
+              agentId: key,
+            });
+          }
         }
       }
     }
