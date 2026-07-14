@@ -11,8 +11,7 @@ import { homedir } from "node:os";
 import { loadConfig } from "./config.mjs";
 
 const MEMORY_BASE = resolve(homedir(), ".openclaw/workspace/memory");
-const MESH_DIR = resolve(MEMORY_BASE, "mesh");
-const LCM_DIR = resolve(MEMORY_BASE, "lcm");
+const LCM_DIR = MEMORY_BASE; // YYYY-MM-DD.md daily logs
 
 /**
  * Reads all markdown files from a directory modified in the last 24 hours.
@@ -47,6 +46,18 @@ async function readRecentFiles(dir) {
     // Directory may not exist yet
   }
   return contents;
+}
+
+async function fetchMeshFacts() {
+  try {
+    const res = await fetch("http://127.0.0.1:18805/mesh/shared-pool");
+    if (!res.ok) throw new Error(`mesh API ${res.status}`);
+    const { facts } = await res.json();
+    if (!facts?.length) return [];
+    return facts.map(f=>`### Mesh [${f.id}] ${f.agent_id}\n\n${f.content}`);
+  } catch(e){
+    console.warn("[dream] mesh: "+e.message);return [];
+  }
 }
 
 /**
@@ -119,7 +130,7 @@ async function main() {
   console.log(`[dream] Agent: ${config.agentId}`);
   console.log(`[dream] Running dream cycle for ${today}`);
 
-  const meshContents = await readRecentFiles(MESH_DIR);
+  const meshContents = await fetchMeshFacts();
   const lcmContents = await readRecentFiles(LCM_DIR);
 
   const totalEntries = meshContents.length + lcmContents.length;
