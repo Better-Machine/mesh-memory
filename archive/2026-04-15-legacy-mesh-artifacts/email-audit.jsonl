@@ -1,0 +1,13 @@
+{"timestamp":"2026-04-16T01:01:09.284Z","type":"email_received","id":1,"from":"Hostinger <team@email.hostinger.com>","subject":"Get started with business email","command":null,"commandResult":null,"telegramForwarded":false}
+{"timestamp":"2026-04-16T01:01:28.741Z","type":"email_sent","to":"Liz@bettermachine.ai","subject":"Test from Email-Liz","messageId":"<2338d18b-676a-ae07-d90c-708e2642c610@bettermachine.ai>"}
+{"timestamp":"2026-04-16T01:06:01.890Z","type":"email_sent","to":"\"Liz (Better Machine)\" <Liz@bettermachine.ai>","subject":"Re: Test from Email-Liz","messageId":"<144bb3cc-88e1-e2dc-ada7-fadc32d595db@bettermachine.ai>"}
+{"timestamp":"2026-04-16T01:06:02.082Z","type":"email_received","id":2,"from":"\"Liz (Better Machine)\" <Liz@bettermachine.ai>","subject":"Test from Email-Liz","command":"unknown","commandResult":"sent","telegramForwarded":false}
+{"timestamp":"2026-04-16T01:06:03.531Z","type":"email_sent","to":"Erik Ross <erikdross@me.com>","subject":"Re: Liz ping","messageId":"<2dcc1229-c1e9-edd3-fb44-dc32e86111d6@bettermachine.ai>"}
+{"timestamp":"2026-04-16T01:06:03.734Z","type":"email_received","id":3,"from":"Erik Ross <erikdross@me.com>","subject":"Liz ping","command":"ping","commandResult":"sent","telegramForwarded":false}
+{"timestamp":"2026-04-16T01:06:05.111Z","type":"email_sent","to":"Erik Ross <erikdross@me.com>","subject":"Re: liz status","messageId":"<d89eaebf-ee47-16c6-4094-47e5803328c3@bettermachine.ai>"}
+{"timestamp":"2026-04-16T01:06:05.314Z","type":"email_received","id":4,"from":"Erik Ross <erikdross@me.com>","subject":"liz status","command":"status","commandResult":"sent","telegramForwarded":false}
+{"timestamp":"2026-04-16T01:06:06.373Z","type":"email_sent","to":"Erik Ross <erikdross@me.com>","subject":"Re: liz help","messageId":"<4ad25c02-106d-4e5d-01ac-d86b5c7dbce8@bettermachine.ai>"}
+{"timestamp":"2026-04-16T01:06:06.569Z","type":"email_received","id":5,"from":"Erik Ross <erikdross@me.com>","subject":"liz help","command":"help","commandResult":"sent","telegramForwarded":false}
+{"timestamp":"2026-04-16T01:06:07.606Z","type":"email_received","id":6,"from":"Erik Ross <erikdross@me.com>","subject":"URGENT: Test alert","command":null,"commandResult":null,"telegramForwarded":false}
+{"timestamp":"2026-04-16T01:07:28.611Z","type":"email_sent","to":"\"Liz (Better Machine)\" <Liz@bettermachine.ai>","subject":"Re: Re: Test from Email-Liz","messageId":"<e4439d38-0cb0-ab0e-3469-186e4aa130e0@bettermachine.ai>"}
+{"timestamp":"2026-04-16T01:07:28.807Z","type":"email_received","id":7,"from":"\"Liz (Better Machine)\" <Liz@bettermachine.ai>","subject":"Re: Test from Email-Liz","command":"unknown","commandResult":"sent","telegramForwarded":false}

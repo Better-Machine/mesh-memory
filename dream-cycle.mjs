@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { loadConfig } from "./config.mjs";
 
 const MEMORY_BASE = resolve(homedir(), ".openclaw/workspace/memory");
-const LCM_DIR = MEMORY_BASE; // YYYY-MM-DD.md daily logs
+const LCM_DIR = MEMORY_BASE; // daily logs at memory/YYYY-MM-DD.md (was v1 "lcm" dir, now folded into daily-log writes)
 
 /**
  * Reads all markdown files from a directory modified in the last 24 hours.

@@ -64,3 +64,29 @@ describe("dream-cycle.mjs graceful degradation", () => {
     assert.match(src, /return \[\];/);
   });
 });
+
+describe("dream-cycle input pipeline ground truth (post-cleanup 2026-07-15)", () => {
+  it("memory/mesh/ directory has been removed (was a stale artifact)", async () => {
+    // After the 2026-07-15 cleanup, the legacy memory/mesh/ directory is gone.
+    // Its sole artifact (email-audit.jsonl) was archived. This test pins the
+    // cleanup so we don't accidentally recreate the directory and confuse
+    // future debugging.
+    try {
+      const { stat } = await import("node:fs/promises");
+      const s = await stat(resolve(MEMORY_BASE, "mesh"));
+      assert.fail(`memory/mesh/ still exists (${s.isDirectory() ? "dir" : "file"}) — the cleanup was reverted`);
+    } catch (e) {
+      // ENOENT is what we want
+      assert.match(e.code, /ENOENT/);
+    }
+  });
+
+  it("legacy mesh artifact is preserved in archive/", async () => {
+    // Forensic preservation: don't lose the data, just move it.
+    const { stat } = await import("node:fs/promises");
+    const archivePath = resolve(MEMORY_BASE, "../projects/mesh-memory/archive/2026-04-15-legacy-mesh-artifacts/email-audit.jsonl");
+    const s = await stat(archivePath);
+    assert.ok(s.isFile(), "archived file should be a regular file");
+    assert.ok(s.size > 0, "archived file should not be empty");
+  });
+});
