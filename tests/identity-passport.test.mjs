@@ -306,6 +306,24 @@ describe('PassportRegistry', () => {
     assert.strictEqual(retrieved, null);
   });
 
+  it('should return null for invalid input types', async () => {
+    // null-path guard: getByName must return null (not throw, not return malformed
+    // data) for invalid agentName inputs. Pinned by Kosfootel/agent-shared#9.
+    const registry = new PassportRegistry(registryDir);
+    
+    const retrievedNull = await registry.getByName(null);
+    assert.strictEqual(retrievedNull, null, 'null should return null');
+    
+    const retrievedUndefined = await registry.getByName(undefined);
+    assert.strictEqual(retrievedUndefined, null, 'undefined should return null');
+    
+    const retrievedEmpty = await registry.getByName('');
+    assert.strictEqual(retrievedEmpty, null, 'empty string should return null');
+    
+    const retrievedNumber = await registry.getByName(123);
+    assert.strictEqual(retrievedNumber, null, 'number should return null');
+  });
+
   it('should verify peer identity', async () => {
     const registry = new PassportRegistry(registryDir);
     

@@ -409,6 +409,9 @@ export class PassportRegistry {
    * Get passport by agent name
    */
   async getByName(agentName) {
+    if (typeof agentName !== 'string' || agentName.length === 0) {
+      return null;
+    }
     const path = join(this.registryPath, `${agentName}.json`);
     if (!existsSync(path)) {
       return null;
