@@ -1,0 +1,11 @@
+{
+  "_comment": "Suggested payload update for cron job dream-staging-nightly (169f92fa-1b75-4d28-9c43-d257bc42a7c8). Apply via: openclaw cron update <id> --patch '{\"payload\":{\"message\":\"<new message below>\"}}' OR via OpenClaw UI. Reference: REQUIREMENTS-dream-cycle-v2-rebuild.md FR-4.",
+  "jobId": "169f92fa-1b75-4d28-9c43-d257bc42a7c8",
+  "name": "dream-staging-nightly",
+  "payload": {
+    "kind": "agentTurn",
+    "message": "Run the nightly dream cycle. Steps:\n\n1. cd /home/erik-ross/.openclaw/workspace/projects/mesh-memory && node dream-cycle.mjs 2>&1 | tail -10\n2. Check the resulting memory/dream-cycle-YYYY-MM-DD.md (YYYY-MM-DD is today's local date):\n   - If the file starts with \"# Dream Cycle — No Entries\" → this is a no-entries run. Do NOT do steps 3 or 4. Do NOT send any Telegram message. Exit silently. (FR-4.1)\n   - Otherwise continue to step 3.\n3. Build a fact-tier staging file at memory/dream-staging/YYYY-MM-DD.md. Sources:\n   - Today and yesterday daily logs from memory/YYYY-MM-DD.md\n   - Mesh facts from http://127.0.0.1:18805/mesh/shared-pool (use curl; the v2-rebuild migration wired this up)\n   - The dream-cycle output file from step 1\n   Format: fact-tier only, provenance-tagged, with an unshared observations section and a contradictions section.\n4. Commit the staging file: cd /home/erik-ross/.openclaw/workspace && git add memory/dream-staging/ && git commit -m \"dream: staging file for YYYY-MM-DD\"\n5. Send a ONE-LINE confirmation to this chat (Telegram), e.g. \"Dream staging 2026-07-24 done\". (FR-4.2)\n   If step 4 failed, send \"Dream staging 2026-07-24 FAILED: <reason>\". (FR-4.3)\n\nDo NOT send any other message. Do not narrate intermediate steps.",
+    "timeoutSeconds": 600
+  },
+  "apply_via": "openclaw cron update 169f92fa-1b75-4d28-9c43-d257bc42a7c8 --patch @cron-payload-suggested.json"
+}
