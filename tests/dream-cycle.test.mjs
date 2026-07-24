@@ -36,8 +36,10 @@ describe("dream-cycle.mjs data sources", () => {
     const src = await readFile(resolve(MEMORY_BASE, "../projects/mesh-memory/dream-cycle.mjs"), "utf-8");
     // Should NOT read memory/mesh/ as a directory
     assert.doesNotMatch(src, /resolve\(MEMORY_BASE,\s*["']mesh["']\)/);
-    // Should fetch from the mesh daemon
-    assert.match(src, /fetch\("http:\/\/127\.0\.0\.1:18805\/mesh\/shared-pool"/);
+    // Should fetch from the mesh daemon (URL is now configurable via MESH_API_URL,
+    // but the default still points at the daemon on :18805)
+    assert.match(src, /127\.0\.0\.1:18805\/mesh\/shared-pool/);
+    assert.match(src, /fetch\(/);
   });
 
   it("dream-cycle produces output when given a daily log", async () => {
