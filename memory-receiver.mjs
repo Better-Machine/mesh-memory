@@ -8,6 +8,7 @@ import express from "express";
 import { mkdir, appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
+import { readAll as readPool } from "./shared-pool-read.mjs";
 import { loadConfig } from "./config.mjs";
 import { detectTags, writeLessonEntry } from "./lesson-tagger.mjs";
 import { receiveFromPeer } from "./shared-pool-sync.mjs";
@@ -183,15 +184,31 @@ function clearTokenFromCache(token) {
 /**
  * Bearer token authentication middleware with token-service integration
  * Handles token rotation gracefully with intelligent retry logic
+ *
+ * Local bypass: when MESH_LOCAL_BYPASS=true AND the request is from a
+ * loopback address (127.0.0.0/8 or ::1), the token check is skipped.
+ * This is for cron jobs and other same-host services that don't have a
+ * bearer token handy. NEVER set this on a network-exposed receiver.
+ * (FR-Phase2-2.4-2: scoped backdoor for local cron use, replaces the
+ * unfixable :18803 token-service dependency.)
  */
 async function tokenAuthMiddleware(req, res, next) {
+  // Local bypass for same-host requests when explicitly enabled.
+  const localBypass = process.env.MESH_LOCAL_BYPASS === "true";
+  if (localBypass) {
+    const remote = req.ip || req.connection?.remoteAddress || "";
+    if (remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1") {
+      return next();
+    }
+  }
+
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Unauthorized: Missing or malformed authorization header" });
   }
 
   const token = auth.slice(7); // Remove "Bearer " prefix
-  
+
   // Basic token format validation
   if (!token || token.length < 32) {
     return res.status(401).json({ error: "Unauthorized: Invalid token format" });
@@ -237,7 +254,10 @@ async function tokenAuthMiddleware(req, res, next) {
  */
 async function main() {
   const config = loadConfig();
-  const port = config.receiverPort;
+  // Port resolution order: MESH_PORT env var (set by systemd unit) > config.receiverPort
+  // (FR-Phase2-2.4-1: reconcile the port mismatch so the systemd unit's MESH_PORT=18805
+  // actually takes effect when set, and tests can still override via JSON config.)
+  const port = Number(process.env.MESH_PORT) || config.receiverPort;
 
   await mkdir(MESH_DIR, { recursive: true });
 
@@ -322,6 +342,41 @@ async function main() {
         return res.status(400).json({ error: err.message });
       }
       console.error("[receiver] Shared pool write error:", err.message);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /**
+   * GET /mesh/shared-pool — Return shared pool entries for local consumers.
+   *
+   * Reads from pool.json via shared-pool-read.mjs (anonymization, decay, audit
+   * applied). Maps the v0.2 entry shape ({id, type, fact, provenance.source, ...})
+   * to the shape dream-cycle expects ({id, agent_id, content}).
+   *
+   * NOTE: this is for LOCAL consumption (cron, same-host). For peer-to-peer
+   * sync, use the v0.2 federated protocol (shared-pool-sync.mjs over A2A).
+   * The v1 daemon's GET handler served raw v1-shaped facts to the entire LAN;
+   * the v0.2 design intentionally doesn't expose that surface.
+   *
+   * (FR-Phase2-2.4-3: add the GET endpoint that PR #23 reads from. The v0.2
+   * source intentionally didn't have it; the v1 daemon did, which is why
+   * "everything was working" before today.)
+   */
+  app.get("/mesh/shared-pool", async (_req, res) => {
+    try {
+      const entries = await readPool({ readerId: "mesh-receiver:local-read" });
+      const facts = entries.map((e) => ({
+        id: e.id,
+        agent_id: e.provenance?.source || "agent", // anonymized role
+        content: e.fact,
+        type: e.type,
+        category: e.category,
+        tags: e.tags,
+        timestamp: e.provenance?.timestamp,
+      }));
+      return res.status(200).json({ facts });
+    } catch (err) {
+      console.error("[receiver] Shared pool read error:", err.message);
       return res.status(500).json({ error: "Internal server error" });
     }
   });
