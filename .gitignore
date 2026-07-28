@@ -20,3 +20,5 @@ tests/.test-*/
 tests/*.db*
 tests/*.jsonl
 tests/A2A_INTEGRATION_TEST_REPORT.md
+recovery-2026-07-27/recovered-chunks.jsonl
+recovery-2026-07-27/reassembled-chunks.jsonl
