@@ -38,11 +38,11 @@ const CONFIG = {
   maxQueueDepth: parseInt(process.env.MESH_MAX_QUEUE) || 500,
   logLevel: process.env.MESH_LOG_LEVEL || 'INFO',
   // Mesh fact TTL (hours) — facts older than this are pruned on sync
-  factTtlHours: parseInt(process.env.MESH_FACT_TTL_HOURS) || 72,
-  // Decay: facts lose 10% decay_score every 24h since last_seen
-  decayRatePerDay: parseFloat(process.env.MESH_DECAY_RATE) || 0.1,
+  factTtlHours: parseInt(process.env.MESH_FACT_TTL_HOURS) || 168, // 7 days
+  // Decay: facts lose 5% decay_score every 24h since last_seen
+  decayRatePerDay: parseFloat(process.env.MESH_DECAY_RATE) || 0.05,
   // Min decay_score before auto-prune
-  minDecayScore: parseFloat(process.env.MESH_MIN_DECAY) || 0.01,
+  minDecayScore: parseFloat(process.env.MESH_MIN_DECAY) || 0.05,
 };
 
 // Ensure directories
