@@ -14,7 +14,7 @@ import { watch as fsWatch } from 'node:fs';
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { readFile, stat, mkdir, appendFile, writeFile } from 'node:fs/promises';
-import { resolve, dirname, join } from 'node:path';
+import { resolve, dirname, join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 
@@ -27,6 +27,7 @@ const PALACE = join(MEMORY, 'palace');
 const MESH = join(MEMORY, 'mesh');
 const CONTACTS = join(PROJECTS, 'mesh-memory.contacts.json');
 const SHARED_POOL = join(MEMORY, 'shared-pool.json');
+const WATCHER_OFFSETS_FILE = process.env.MESH_OFFSETS_PATH || join(PALACE, 'watcher-offsets.json');
 
 const CONFIG = {
   port: parseInt(process.env.MESH_PORT) || 18805,
@@ -261,6 +262,45 @@ function resolveTailscaleIp(lanIp) {
 
 // ─── Shared Pool Operations ─────────────────────────────────────────────────
 
+// Deep Memory (L2) Operations
+
+let _insertDeepMemoryStmt = null;
+let _insertDeepMemoryMetaStmt = null;
+
+function indexDeepMemory(entry) {
+  if (!_insertDeepMemoryStmt) {
+    _insertDeepMemoryStmt = db.prepare(`
+      INSERT INTO deep_memory (agent_id, content, category, timestamp, source, provenance)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    _insertDeepMemoryMetaStmt = db.prepare(`
+      INSERT INTO deep_memory_meta (rowid, agent_id, content, category, timestamp, source, provenance)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+  }
+
+  const timestamp = entry.timestamp || new Date().toISOString();
+  const provenance = JSON.stringify(entry.provenance || {});
+  const agentId = entry.agentId || 'unknown';
+  const category = entry.category || 'session';
+  const source = entry.source || 'unknown';
+
+  const info = _insertDeepMemoryStmt.run(agentId, entry.content, category, timestamp, source, provenance);
+  _insertDeepMemoryMetaStmt.run(info.lastInsertRowid, agentId, entry.content, category, timestamp, source, provenance);
+}
+
+// Build a safe FTS5 MATCH query from free-text user input. Quoting each
+// token as a literal phrase avoids FTS5 syntax errors on punctuation
+// (hyphens, colons, quotes, etc.) that are common in real search terms
+// (e.g. "mesh-memory") but have special meaning in raw FTS5 query syntax.
+function toFtsQuery(q) {
+  const terms = String(q || '').trim().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return '';
+  return terms.map(t => '"' + t.replace(/"/g, '""') + '"').join(' AND ');
+}
+
+// Shared Pool Operations
+
 function addSharedFact(fact) {
   const now = new Date().toISOString();
   const stmt = db.prepare(`
@@ -451,11 +491,31 @@ async function pushFactsToPeer(peer) {
     // Get our facts not yet synced to this peer
     const lastSync = db.prepare('SELECT last_success FROM sync_state WHERE peer_name = ?').get(peer.name);
     const since = lastSync?.last_success || '1970-01-01T00:00:00Z';
+    // Captured before the query so it's safe to use as the new cursor even
+    // when nothing is found — anything inserted after this instant will
+    // still be picked up by the next cycle's `timestamp > since` filter.
+    const checkedAt = new Date().toISOString();
 
     const facts = db.prepare('SELECT * FROM shared_pool WHERE timestamp > ? AND agent_id = ? ORDER BY timestamp ASC LIMIT 50')
       .all(since, passport.l0?.agentId);
 
-    if (facts.length === 0) return { success: true, pushed: 0 };
+    if (facts.length === 0) {
+      // Nothing new to send, but the check-in itself succeeded. Advance
+      // last_success so /health reflects real sync health instead of
+      // freezing at the last time there happened to be data to send — that
+      // previously made a healthy-but-idle peer look identical to a broken
+      // one.
+      db.prepare(`
+        INSERT INTO sync_state (peer_name, last_sync, last_success, status)
+        VALUES (?, ?, ?, 'active')
+        ON CONFLICT(peer_name) DO UPDATE SET
+          last_sync = excluded.last_sync,
+          last_success = excluded.last_success,
+          status = 'active',
+          failure_count = 0
+      `).run(peer.name, checkedAt, checkedAt);
+      return { success: true, pushed: 0 };
+    }
 
     const res = await fetch(`${peer.url}/mesh/sync`, {
       method: 'POST',
@@ -476,7 +536,12 @@ async function pushFactsToPeer(peer) {
 
     log('INFO', `Pushed ${facts.length} facts to ${peer.name}`);
 
-    // Update last_success — only after successful push
+    // Advance last_success to the last pushed fact's own timestamp (not
+    // "now") when this batch hit the LIMIT — there may be older backlog
+    // still waiting, and anchoring on "now" would jump past it, permanently
+    // orphaning it since future queries only look for timestamp > since.
+    const newSuccess = facts.length < 50 ? checkedAt : facts[facts.length - 1].timestamp;
+
     db.prepare(`
       INSERT INTO sync_state (peer_name, last_sync, last_success, status)
       VALUES (?, ?, ?, 'active')
@@ -485,7 +550,7 @@ async function pushFactsToPeer(peer) {
         last_success = excluded.last_success,
         status = 'active',
         failure_count = 0
-    `).run(peer.name, new Date().toISOString(), new Date().toISOString());
+    `).run(peer.name, checkedAt, newSuccess);
 
     return { success: true, pushed: facts.length };
   } catch (err) {
@@ -569,26 +634,108 @@ function extractTaggedFacts(messages) {
   return facts;
 }
 
+const SKIP_ROLES = new Set(['tool', 'system']);
+const MIN_CONTENT_LENGTH = 20;
+
+// Message content comes in two shapes depending on provider/role: a plain
+// string, or an Anthropic-style array of content blocks ([{type:'text',...}]
+// interleaved with tool_use/tool_result blocks). Flatten to searchable text.
+function extractTextContent(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter(b => b && b.type === 'text' && typeof b.text === 'string')
+      .map(b => b.text)
+      .join('\n')
+      .trim();
+  }
+  return '';
+}
+
+function extractMessages(rawEvents, sessionId) {
+  const messages = [];
+  for (const evt of rawEvents) {
+    if (!evt || evt.type !== 'message' || !evt.message) continue;
+    const { role } = evt.message;
+    if (SKIP_ROLES.has(role)) continue;
+    const content = extractTextContent(evt.message.content);
+    if (content.trim().length < MIN_CONTENT_LENGTH) continue;
+    messages.push({
+      content,
+      timestamp: evt.timestamp || new Date().toISOString(),
+      sessionKey: sessionId,
+    });
+  }
+  return messages;
+}
+
 async function processSessionFile(filePath) {
-  const messages = await readDelta(filePath);
+  const rawEvents = await readDelta(filePath);
+  saveOffsetsDebounced();
+  if (rawEvents.length === 0) return;
+
+  const sessionId = basename(filePath).replace(/\.jsonl$/, '');
+  const messages = extractMessages(rawEvents, sessionId);
   if (messages.length === 0) return;
 
-  const facts = extractTaggedFacts(messages);
-  if (facts.length === 0) return;
+  for (const msg of messages) {
+    indexDeepMemory({
+      agentId: passport.l0?.agentId || 'unknown',
+      content: msg.content,
+      category: 'session',
+      timestamp: msg.timestamp,
+      source: sessionId,
+      provenance: { source: 'memory-watcher', sessionKey: msg.sessionKey },
+    });
+  }
 
+  const facts = extractTaggedFacts(messages);
   for (const fact of facts) {
     addSharedFact(fact);
   }
 
-  log('INFO', `Extracted ${facts.length} tagged facts from ${filePath}`);
+  log('INFO', `Indexed ${messages.length} messages (${facts.length} tagged facts) from ${filePath}`);
+}
+
+function isSessionFile(name) {
+  return name.endsWith('.jsonl') && !name.endsWith('.trajectory.jsonl');
+}
+
+let offsetsSaveTimer = null;
+function saveOffsetsDebounced() {
+  if (offsetsSaveTimer) return;
+  offsetsSaveTimer = setTimeout(async () => {
+    offsetsSaveTimer = null;
+    try {
+      await writeFile(WATCHER_OFFSETS_FILE, JSON.stringify(Object.fromEntries(fileOffsets)));
+    } catch (err) {
+      log('WARN', 'Failed to save watcher offsets', { error: err.message });
+    }
+  }, 2000);
+}
+
+function loadWatcherOffsets() {
+  try {
+    const raw = readFileSync(WATCHER_OFFSETS_FILE, 'utf-8');
+    const obj = JSON.parse(raw);
+    for (const [k, v] of Object.entries(obj)) fileOffsets.set(k, v);
+    log('INFO', 'Loaded watcher offsets', { files: fileOffsets.size });
+  } catch {
+    // No offsets file yet
+  }
 }
 
 function startWatcher() {
-  const watchDir = resolve(WORKSPACE, 'lcm-files');
+  // Real OpenClaw session transcripts live here. NOT ~/.openclaw/workspace/lcm-files
+  // (never existed) and NOT ~/.openclaw/lcm-files (unrelated cached web-fetch content).
+  // Fixed 2026-09-05 as part of the mesh-memory deep-search fix.
+  const watchDir = resolve(homedir(), '.openclaw/agents/main/sessions');
   if (!existsSync(watchDir)) {
-    log('WARN', 'LCM files directory not found, skipping watcher', { path: watchDir });
+    log('WARN', 'Session files directory not found, skipping watcher', { path: watchDir });
     return;
   }
+
+  loadWatcherOffsets();
 
   // Watch existing JSONL files
   function watchFile(filePath) {
@@ -604,12 +751,14 @@ function startWatcher() {
 
     watchers.set(filePath, w);
     // Initial scan
-    processSessionFile(filePath).catch(() => {});
+    processSessionFile(filePath).catch(err =>
+      log('WARN', `Initial scan error: ${filePath}`, { error: err.message })
+    );
   }
 
   // Watch directory for new files
   const dirWatcher = fsWatch(watchDir, { recursive: false }, (eventType, filename) => {
-    if (filename && filename.endsWith('.jsonl')) {
+    if (filename && isSessionFile(filename)) {
       const fullPath = resolve(watchDir, filename);
       if (eventType === 'rename' && existsSync(fullPath)) {
         watchFile(fullPath);
@@ -621,11 +770,13 @@ function startWatcher() {
   try {
     const files = readdirSync(watchDir);
     for (const f of files) {
-      if (f.endsWith('.jsonl')) {
+      if (isSessionFile(f)) {
         watchFile(resolve(watchDir, f));
       }
     }
-  } catch {}
+  } catch (err) {
+    log('WARN', 'Failed to list session directory', { error: err.message });
+  }
 
   log('INFO', 'Memory watcher started', { dir: watchDir, files: watchers.size });
 }
@@ -779,9 +930,17 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/facts/search' && method === 'GET') {
       const q = url.searchParams.get('q') || '';
       const limit = parseInt(url.searchParams.get('limit')) || 10;
+      const ftsQuery = toFtsQuery(q);
 
-      const results = db.prepare('SELECT * FROM deep_memory WHERE deep_memory MATCH ? LIMIT ?')
-        .all(q, limit);
+      let results = [];
+      if (ftsQuery) {
+        try {
+          results = db.prepare('SELECT * FROM deep_memory WHERE deep_memory MATCH ? LIMIT ?')
+            .all(ftsQuery, limit);
+        } catch (err) {
+          log('WARN', 'Search query failed', { q, ftsQuery, error: err.message });
+        }
+      }
       sendJSON(res, 200, { query: q, results });
       return;
     }
